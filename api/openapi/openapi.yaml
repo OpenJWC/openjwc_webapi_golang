@@ -1,0 +1,29 @@
+openapi: 3.1.0
+info:
+  title: OpenJWC API
+  version: 0.1.0
+  description: OpenJWC Go 重置版的 HTTP API 契约。
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: 检查服务进程是否可用
+      operationId: getHealth
+      responses:
+        "200":
+          description: 服务可用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: ok
