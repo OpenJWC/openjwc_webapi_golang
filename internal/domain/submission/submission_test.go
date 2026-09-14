@@ -7,6 +7,7 @@ import (
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/domain/submission"
 )
 
+// TestReviewRejectsRepeatedTransition 验证投稿审核不能重复迁移状态。
 func TestReviewRejectsRepeatedTransition(t *testing.T) {
 	createdAt := time.Now().UTC()
 	item, err := submission.New(submission.CreateInput{

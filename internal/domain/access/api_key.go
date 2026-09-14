@@ -90,6 +90,7 @@ func (key APIKey) BoundDeviceIDs() []string {
 	return devices
 }
 
+// clone 复制设备集合，避免凭据状态变更影响旧值。
 func (key APIKey) clone() APIKey {
 	cloned := key
 	cloned.boundDevices = make(map[string]struct{}, len(key.boundDevices))

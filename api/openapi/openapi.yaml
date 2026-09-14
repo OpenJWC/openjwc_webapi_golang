@@ -1,29 +1,588 @@
 openapi: 3.1.0
 info:
   title: OpenJWC API
-  version: 0.1.0
-  description: OpenJWC Go 重置版的 HTTP API 契约。
+  version: 0.3.0
+  description: >-
+    单二进制后端，仅公开客户端接口。管理员通过本机 Unix socket 与 Bubble Tea TUI 操作。
+    迁移后用户重新登录；API Key 关联用户后继承该用户权限。
+    搜索改为字面全文检索，similarity_score 不再表示向量相似度。
 servers:
   - url: http://localhost:8080
+security:
+  - Bearer: []
 paths:
-  /healthz:
+  /:
     get:
-      summary: 检查服务进程是否可用
-      operationId: getHealth
+      operationId: getRoot
+      security: []
       responses:
-        "200":
-          description: 服务可用
+        '200':
+          description: 服务运行
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthResponse"
+                type: object
+                required: [message]
+                properties:
+                  message: {type: string, const: 'Server is running!'}
+  /healthz:
+    get:
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: 进程存活，非磁盘完整性检查
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: ok}
+  /api/v2/client/auth/register:
+    post:
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Registration'}
+      responses:
+        '200': {$ref: '#/components/responses/EmptySuccess'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/client/auth/login:
+    post:
+      operationId: loginUser
+      security: []
+      parameters:
+        - {$ref: '#/components/parameters/RequiredDevice'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Login'}
+      responses:
+        '200':
+          description: 登录成功，令牌有效期 30 天；同设备再次登录撤销旧令牌
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 登录成功}
+                  data:
+                    type: object
+                    required: [token, username, email]
+                    properties:
+                      token: {type: string, description: 不透明凭据，客户端不得依赖内部编码}
+                      username: {type: string}
+                      email: {type: string}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/client/device:
+    get:
+      operationId: listUserDevices
+      parameters:
+        - {$ref: '#/components/parameters/OptionalDevice'}
+      responses:
+        '200':
+          description: 当前用户的设备列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 请求成功}
+                  data:
+                    type: object
+                    required: [devices]
+                    properties:
+                      devices:
+                        type: array
+                        items: {$ref: '#/components/schemas/Device'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/client/device/unbind:
+    post:
+      operationId: unbindUserDevice
+      parameters:
+        - {$ref: '#/components/parameters/OptionalDevice'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_uuid]
+              properties:
+                device_uuid: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        '200': {$ref: '#/components/responses/DetailSuccess'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/register:
+    post:
+      operationId: registerDeviceCompatibility
+      description: 用户令牌设备已在登录时绑定；关联用户的 API Key 在此请求中事务性绑定设备。
+      parameters:
+        - {$ref: '#/components/parameters/OptionalDevice'}
+      responses:
+        '200': {$ref: '#/components/responses/EmptySuccess'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/device:
+    get:
+      operationId: listAPIKeyDevices
+      description: 仅接受 API Key，调用设备必须已经绑定。
+      parameters:
+        - {$ref: '#/components/parameters/RequiredDevice'}
+      responses:
+        '200':
+          description: 旧 API Key 设备列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string}
+                  data:
+                    type: object
+                    required: [total, bound_devices]
+                    properties:
+                      total: {type: integer, minimum: 1}
+                      bound_devices:
+                        type: array
+                        items: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/device/unbind:
+    post:
+      operationId: unbindAPIKeyDevice
+      parameters:
+        - {$ref: '#/components/parameters/RequiredDevice'}
+      responses:
+        '200': {$ref: '#/components/responses/DetailSuccess'}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/notices:
+    get:
+      operationId: listNotices
+      description: 需要浏览资讯权限，total_returned 是匹配总数，不是当前页长度。
+      parameters:
+        - {$ref: '#/components/parameters/OptionalDevice'}
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 20001, default: 1}
+        - name: size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: label
+          in: query
+          schema: {type: string, maxLength: 256}
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 获取成功}
+                  data:
+                    type: object
+                    required: [total_returned, total_label, notices]
+                    properties:
+                      total_returned: {type: integer, minimum: 0}
+                      total_label: {type: integer, minimum: 0}
+                      notices:
+                        type: array
+                        items: {$ref: '#/components/schemas/Notice'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/notices/labels:
+    get:
+      operationId: listLabels
+      responses:
+        '200':
+          description: 标签列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 获取成功}
+                  data:
+                    type: object
+                    required: [labels]
+                    properties:
+                      labels:
+                        type: array
+                        items: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/notices/search:
+    post:
+      operationId: searchNotices
+      description: >-
+        需要浏览资讯权限。FTS5 trigram 字面短语匹配；一至两个字符使用子串匹配。
+        top_k 兼容旧版裁剪到 1～20。字面命中分数为 1、距离为 0；非向量相似度。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: {type: string, minLength: 1, maxLength: 200}
+                top_k: {type: integer, default: 5}
+                min_similarity: {type: [number, 'null'], deprecated: true, description: 仅按旧占位值筛选，不具有向量阈值含义}
+      responses:
+        '200':
+          description: 搜索成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 搜索成功}
+                  data:
+                    type: object
+                    required: [total_found, results]
+                    properties:
+                      total_found: {type: integer, minimum: 0}
+                      results:
+                        type: array
+                        items: {$ref: '#/components/schemas/SearchResult'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/motto:
+    get:
+      operationId: getMotto
+      description: 返回管理员配置的每日一言，不再隐式依赖第三方随机语录服务。
+      responses:
+        '200':
+          description: 每日一言
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string}
+                  data:
+                    type: object
+                    required: [text, author]
+                    properties:
+                      text: {type: string}
+                      author: {type: [string, 'null']}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/submissions:
+    post:
+      operationId: submitNotice
+      description: 需要投稿权限；相同标题、日期与链接生成相同 ID，重复提交返回 422。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SubmissionInput'}
+      responses:
+        '200': {$ref: '#/components/responses/EmptySuccess'}
+        '422':
+          description: 字段无效或投稿已存在
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: '#/components/schemas/Error'}
+                  - {$ref: '#/components/schemas/EmptyEnvelope'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/submissions/my:
+    get:
+      operationId: listMySubmissions
+      responses:
+        '200':
+          description: 当前用户的投稿
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 提交成功}
+                  data:
+                    type: object
+                    required: [total, notices]
+                    properties:
+                      total: {type: integer, minimum: 0}
+                      notices:
+                        type: array
+                        items: {$ref: '#/components/schemas/SubmissionSummary'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/client/chat:
+    post:
+      operationId: chatWithNotices
+      description: >-
+        同时需要资讯与问答权限。每个请求独立历史，最多 8 轮、16 次只读工具调用、120 秒。
+        stream=true 使用旧 Android 兼容的原始文本 data 帧，而非标准多行 SSE 编码。
+        推理期间每十秒发送空 data 心跳，最终答案完成后发送文本及 [DONE]；不暴露工具过程。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChatInput'}
+      responses:
+        '200':
+          description: 非流式文本或旧版 SSE
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, reply]
+                properties:
+                  status: {type: string, const: success}
+                  reply: {type: string}
+            text/event-stream:
+              schema: {type: string}
+              example: "data: 回答正文\n\ndata: [DONE]\n\n"
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/client/chat:
+    post:
+      operationId: chatWithEvents
+      description: >-
+        标准 SSE + JSON，只提供事件流；stream 字段不改变本接口响应类型。
+        与旧 chat 共享身份、资讯和问答权限、每用户并发限制及 Agent 预算。
+        工具事件即时发送；模型轮次结束前无法保证 content 不是工具轮中间正文，
+        因此最终答案明确标记 buffered-final，当前不承诺逐 token 呈现。
+        事件版本为 1，sequence 在 run_id 内从 1 递增，工具开始与结束使用同一 tool_id。
+        run.completed/run.failed 为终止事件；连接提前关闭且没有终止事件视为未完成。
+        id 字段仅用于定位，不支持 Last-Event-ID 重放；心跳为 SSE 注释。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChatInput'}
+      responses:
+        '200':
+          description: 有序问答事件，开始传输后的错误由 run.failed 表达
+          content:
+            text/event-stream:
+              schema: {type: string}
+              example: "event: run.started\ndata: {\"version\":1,\"run_id\":\"example\",\"sequence\":1,\"type\":\"run.started\",\"delivery\":\"buffered-final\"}\n\n"
+              x-event-schema: {$ref: '#/components/schemas/ChatEvent'}
+        '403': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v2/client/daily-reports/{date}:
+    get:
+      operationId: getDailyReport
+      description: 需要浏览资讯权限，只返回已完成日报。
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema: {type: string, format: date}
+      responses:
+        '200':
+          description: 日报正文
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 获取成功}
+                  data:
+                    type: object
+                    required: [date, content]
+                    properties:
+                      date: {type: string, format: date}
+                      content: {type: string}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
 components:
+  securitySchemes:
+    Bearer:
+      type: http
+      scheme: bearer
+  parameters:
+    RequiredDevice:
+      name: X-Device-ID
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128}
+    OptionalDevice:
+      name: X-Device-ID
+      in: header
+      required: false
+      description: 用户令牌携带时必须与登录设备相符；API Key 必填。
+      schema: {type: string, maxLength: 128}
+  responses:
+    Error:
+      description: >-
+        401 凭据无效；403 权限不足；409 状态冲突；422 输入无效；
+        429 模型容量已满；503 服务繁忙或模型不可用；504 超时；500 内部错误。
+        SSE 开始后失败以安全文本结束，不再改变 HTTP 状态。
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    EmptySuccess:
+      description: 操作成功，msg 保留操作对应的中文消息
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/EmptyEnvelope'}
+    DetailSuccess:
+      description: 解绑成功
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [detail]
+            properties:
+              detail: {type: string}
   schemas:
-    HealthResponse:
+    Error:
       type: object
-      required:
-        - status
+      required: [detail]
       properties:
-        status:
+        detail:
+          oneOf:
+            - {type: string}
+            - type: array
+              items:
+                type: object
+                required: [type, loc, msg]
+                properties:
+                  type: {type: string}
+                  loc:
+                    type: array
+                    items: {type: string}
+                  msg: {type: string}
+    EmptyEnvelope:
+      type: object
+      required: [msg, data]
+      properties:
+        msg: {type: string}
+        data: {type: object, maxProperties: 0}
+    Registration:
+      type: object
+      required: [username, email, password_hash]
+      properties:
+        username: {type: string, minLength: 1, maxLength: 128}
+        email: {type: string, format: email, maxLength: 254}
+        password_hash: {type: string, minLength: 1, maxLength: 72, description: 按旧协议再次执行 bcrypt，长度上限按 UTF-8 字节计}
+    Login:
+      type: object
+      required: [account, password_hash, device_name]
+      properties:
+        account: {type: string, minLength: 1, maxLength: 254}
+        password_hash: {type: string, minLength: 1, maxLength: 72}
+        device_name: {type: string, minLength: 1, maxLength: 256}
+    Device:
+      type: object
+      required: [device_uuid, device_name, last_login]
+      properties:
+        device_uuid: {type: string}
+        device_name: {type: string}
+        last_login: {type: string, format: date-time}
+    Notice:
+      type: object
+      required: [id, label, title, date, detail_url, is_page, content_text, attachments]
+      properties:
+        id: {type: string}
+        label: {type: [string, 'null']}
+        title: {type: string}
+        date: {type: string, format: date}
+        detail_url: {type: string}
+        is_page: {type: boolean}
+        content_text: {type: string}
+        attachments:
+          type: array
+          items: {type: string}
+    ChatEvent:
+      type: object
+      required: [version, run_id, sequence, type]
+      properties:
+        version: {type: integer, const: 1}
+        run_id: {type: string}
+        sequence: {type: integer, minimum: 1}
+        type:
           type: string
-          const: ok
+          enum: [run.started, tool.started, tool.completed, answer.delta, run.completed, run.failed]
+        tool_id: {type: string, description: 服务分配的运行内唯一工具标识}
+        name: {type: string, enum: [bash]}
+        summary: {type: string, description: 受限说明，不包含完整工具结果或隐藏推理}
+        status: {type: string, enum: [completed, failed]}
+        duration_ms: {type: integer, minimum: 0}
+        text: {type: string, description: 仅答案事件携带最终回答}
+        delivery: {type: string, enum: [buffered-final]}
+        code: {type: string, enum: [agent_failed]}
+    SearchResult:
+      type: object
+      required: [id, label, title, date, detail_url, is_page, similarity_score, distance]
+      properties:
+        id: {type: string}
+        label: {type: [string, 'null']}
+        title: {type: string}
+        date: {type: string}
+        detail_url: {type: string}
+        is_page: {type: boolean}
+        similarity_score: {type: number, const: 1, deprecated: true, description: 旧字段兼容占位，不是语义相似度或置信度}
+        distance: {type: number, const: 0, deprecated: true, description: 旧字段兼容占位，不是向量距离}
+    SubmissionInput:
+      type: object
+      required: [label, title, date, is_page, content]
+      properties:
+        label: {type: string, maxLength: 256}
+        title: {type: string, minLength: 1, maxLength: 1024}
+        date: {type: string, format: date}
+        detail_url: {type: [string, 'null'], maxLength: 2048}
+        is_page: {type: boolean}
+        content:
+          type: object
+          required: [text, attachment_urls]
+          properties:
+            text: {type: string, minLength: 1, description: 受 submission_max_length 设置限制}
+            attachment_urls:
+              type: array
+              maxItems: 50
+              items: {type: string, maxLength: 2048}
+    SubmissionSummary:
+      type: object
+      required: [id, label, title, date, detail_url, is_page, status, review]
+      properties:
+        id: {type: string}
+        label: {type: string}
+        title: {type: string}
+        date: {type: string, format: date}
+        detail_url: {type: string}
+        is_page: {type: boolean}
+        status: {type: string, enum: [pending, approved, rejected]}
+        review: {type: string}
+    ChatInput:
+      type: object
+      required: [user_query]
+      properties:
+        user_query: {type: string, minLength: 1, maxLength: 16000}
+        stream: {type: boolean, default: false}
+        notice_ids:
+          type: [array, 'null']
+          maxItems: 10
+          items: {type: string, minLength: 1, maxLength: 256}
+        history:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: {type: string, enum: [user, assistant]}
+              content: {type: string}

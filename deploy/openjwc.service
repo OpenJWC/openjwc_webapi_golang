@@ -1,0 +1,27 @@
+[Unit]
+Description=OpenJWC standalone backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openjwc
+Group=openjwc
+ExecStart=/usr/local/bin/openjwc serve
+Environment=OPENJWC_DATA_DIR=/var/lib/openjwc
+Environment=OPENJWC_HTTP_ADDRESS=127.0.0.1:8080
+StateDirectory=openjwc
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openjwc
+
+[Install]
+WantedBy=multi-user.target

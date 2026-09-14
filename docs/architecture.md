@@ -1,101 +1,91 @@
-# 架构与依赖调研
+# 架构
 
-## 调研范围
+## 已确认边界
 
-本次设计参考以下项目及官方资料：
+- 一个 Linux Go 二进制；本地 SQLite；无 Docker、Python/Node/Pi 运行时、LanceDB 或外部数据库。
+- 公开监听器只提供客户端 v1/v2，包括新增日报与 v2 chat 事件接口。
+- 同一二进制的默认命令打开 Bubble Tea；`serve` 运行服务，`recover` 打开离线恢复终端。
+- 管理 IPC 是私有目录内的 `0600` Unix socket。服务与 TUI 通过操作系统账号隔离，不再维护另一套管理员密码或管理 JWT。
+- 仅迁移旧 SQLite 用户、注册申请与 API Key；资讯重新抓取，不读取 LanceDB。
 
-- 本地 Python 后端：`/home/moonhalf/Projects/python_projects/OpenJWC-webapi`
-- Python 后端仓库：<https://github.com/OpenJWC/OpenJWC-webapi>
-- 爬虫：<https://github.com/OpenJWC/JwcCrawler>
-- Android 客户端：<https://github.com/OpenJWC/OpenJWCClient>
-- 管理前端：<https://github.com/OpenJWC/OpenJWC-web-frontend>
-- 私有部署编排：<https://github.com/OpenJWC/OpenJWC-Server>
-- QQ 机器人：<https://github.com/OpenJWC/openjwc-qqbot>
-- Go 模块布局：<https://go.dev/doc/modules/layout>
-- Go 代码评审建议：<https://go.dev/wiki/CodeReviewComments>
-
-## 现有系统结论
-
-Python 后端采用 FastAPI 路由、服务和模型分层，提供客户端与管理员两组 `/api/v1` 接口。主要能力包括通知同步与查询、API Key 及设备绑定、投稿审核、管理员 JWT、系统设置、格言、语义搜索、LLM 对话、监控和日志读取。
-
-当前数据层使用 SQLite，附件和绑定设备以 JSON 字符串保存；向量数据使用 ChromaDB。AI 调用依赖 DeepSeek、智谱和 OpenAI 兼容客户端，爬虫由独立的 Rust 二进制执行。现有项目未配置自动化测试，数据库建表语句中还存在格言表字段逗号缺失等风险，因此重置版不应逐文件翻译，而应先固定契约和领域约束。
-
-相关仓库形成了清晰边界：
-
-- `JwcCrawler` 使用 Rust、reqwest、scraper 和 serde，产出通知数据。
-- `OpenJWCClient` 使用 Kotlin、Compose、Retrofit、Room 和 DataStore，消费客户端 API。
-- `OpenJWC-web-frontend` 使用 React、Redux Toolkit、Axios、React Hook Form 和 Zod，消费管理 API。
-- `OpenJWC-Server` 通过 Docker Compose 编排后端、爬虫工作进程和前端，并共享数据卷。
-- `openjwc-qqbot` 使用 NoneBot、HTTPX、APScheduler 和 SQLite，是通知接口的另一个消费者。
-
-这意味着 Go 重置版必须优先保持外部 HTTP 行为和爬虫数据兼容，而不需要保留 Python 内部类结构。
-
-## 架构选择
-
-采用“薄分层 + 按领域聚合”的单体服务，暂不拆分微服务：
+## 目录与依赖方向
 
 ```text
-cmd/openjwc-api/          进程入口、信号与生命周期
-internal/app/             依赖组装
-internal/config/          环境配置
-internal/domain/          纯领域模型与端口
-internal/transport/httpapi/ HTTP 路由与 DTO
-api/openapi/              对外 API 契约
-migrations/               SQLite 迁移
+cmd/openjwc/                  参数、配置、信号和退出码
+internal/app/                 依赖组装、监听器与资源生命周期
+internal/domain/              不可变资讯、投稿、访问身份和原有领域约束
+internal/service/             身份、管理、Agent、爬虫、日报、调度与恢复用例
+internal/infrastructure/sqlite/ SQLite 存储、迁移、备份和旧库导入
+internal/transport/httpapi/    显式客户端 DTO、校验和兼容响应
+internal/transport/control/    私有 Unix socket 协议
+internal/transport/tui/        Bubble Tea/Bubbles 状态、表单与安全渲染
+internal/transport/cli/        命令解析、本地服务管理与安全帮助
+internal/observability/        slog 摘要及进程监控
+internal/quality/              源代码风格检查
+migrations/                   不可改写的版本化 SQL 与嵌入资源
 ```
 
-依赖方向为 `transport -> service -> domain`，基础设施适配器实现领域或服务层定义的小接口。领域包不依赖 HTTP、SQL、第三方 SDK 或全局单例。只有进程入口负责组装具体实现。
+传输层依赖消费方端口，基础设施实现这些端口；领域不依赖 HTTP、SQL 或日志。无全局数据库单例，TUI 不直接打开运行中的数据库。工具与模型消息只保存在单次 Agent 请求的局部变量中。
 
-当前只实现可运行的健康检查和核心领域模型，不提前创建空服务或空适配器。后续按通知、访问控制、投稿、对话的纵向功能逐步增加用例和实现。
+当前创建不变量由领域对象校验；登录、注册审核和投稿审核中依赖事务的状态复核位于 SQLite 适配器。已有 `Submission.Review` 领域方法保留单元规则验证，但线上审核入口是 `reviewSubmission`，不应误认为两者串联调用。管理动作与日报状态使用具名枚举；权限编辑通过具名用户投影，不依赖表格列顺序。
 
-## 核心数据设计
+TUI 程序入口拥有会话上下文与取消动作，模型只保存命令构造能力。会话结束后禁止迟到请求进入，并等待已经发出的请求清理完成；离线恢复不会在文件切换尚未结束时提前释放进程锁。
 
-首批领域结构包括：
+## 存储与失败模型
 
-- `notice.Notice`：通知标识、标签、标题、发布日期、详情链接、正文和附件。
-- `access.APIKey`：密钥摘要、所有者、启停状态、设备配额和绑定设备。
-- `submission.Submission`：投稿内容及 `pending -> approved/rejected` 的单向审核状态机。
-- `chat.Message`：限制为 system、user、assistant 三种角色的对话消息。
+- 数据库文件 `0600`，目录 `0700`，服务进程使用操作系统独占锁。
+- 单写连接限制写事务竞争；独立八连接只读池使用 WAL 快照。
+- 每条连接明确设置外键、五秒忙等待、`synchronous=FULL`；写事务使用 `BEGIN IMMEDIATE`。
+- 迁移作为事务执行，记录文件名和 SHA-256；已执行脚本被修改或数据库版本较新时拒绝启动。
+- 非版本化数据库不会被自动视为新格式；必须向新库显式导入。
+- FTS5 为派生索引，由数据库触发器与资讯主表共同提交，可检查及重建。
+- 短中文查询使用字面子串匹配，三字符以上使用 trigram FTS。不是语义向量检索，也不伪装成向量相似度。
+- 在线备份使用 `VACUUM INTO` 创建一致快照，校验后通过不覆盖目标的链接发布并同步目录。
+- 离线恢复先校验工作副本，再隔离旧主库及侧文件，最后发布新库；恢复中断标记会阻止空库误启动。
 
-领域实体隐藏字段，通过带语义的构造函数创建，并在构造时维护不变量。切片和映射在输入、输出时复制，避免外部修改内部状态。
+SQLite 仍然是单写者数据库。它适合此项目读多写少的单机部署，不能据此承诺无限吞吐、跨机器高可用或磁盘故障下零丢失。容量需在目标服务器与实际数据上测量。
 
-初始迁移对原 SQLite 结构作以下调整：
+## 身份与权限
 
-- 日期统一存为 UTC RFC 3339 文本，Go 内部使用 `time.Time`。
-- 附件、API Key 设备绑定改为关联表，避免 JSON 字段无法约束和索引。
-- API Key 只保存摘要，不保存可直接使用的明文。
-- 审核状态和布尔字段添加 `CHECK` 约束。
-- 所有列表关键路径添加组合索引。
-- 数据库变更交给版本化迁移，不在应用启动时动态执行建表字符串。
+用户令牌为三十二字节安全随机材料，持久化 SHA-256 摘要；有效期三十天。客户端只应保存并提交令牌，不解析编码。同设备重新登录替换旧摘要；解绑立即撤销会话。
 
-## 依赖策略
+密码材料保持旧协议的 `password_hash` 字段，服务端再用 bcrypt 保存。昂贵运算有四槽并发限制；身份变更与设备配额在事务中再次检查。
 
-当前骨架只使用标准库：
+每次请求重新读取用户启用状态及浏览、问答、投稿能力。问答还要求浏览权限，避免通过检索工具绕过资讯限制。关联用户的 API Key 继承相同权限；密钥的初次设备绑定在事务中检查配额。变更密钥关联用户会清除旧设备绑定。
 
-- HTTP：Go 1.22 以后 `net/http.ServeMux` 已支持方法和路径匹配，现阶段无需额外路由库。
-- 日志：使用 `log/slog` 输出结构化日志。
-- 测试：使用 `testing`，避免在需求尚未稳定时引入断言框架。
+新用户默认不获问答权限。API Key 明文仅在创建时显示；迁移旧明文密钥时只保留安全摘要。模型供应商密钥因调用需要可读取，保存于私有数据库，设置列表及审计中不展示。
 
-进入对应实现阶段后再评估以下依赖，并锁定直接依赖版本：
+## 原生 Agent 与虚拟文件
 
-| 能力 | 首选方案 | 选择理由 |
-| --- | --- | --- |
-| SQLite 驱动 | `modernc.org/sqlite` | 纯 Go，容器构建不依赖 CGO |
-| 数据迁移 | `github.com/pressly/goose/v3` | 支持 SQL 迁移和 SQLite |
-| JWT | `github.com/golang-jwt/jwt/v5` | API 稳定且维护活跃 |
-| 密码哈希 | `golang.org/x/crypto/bcrypt` | 与现有 bcrypt 数据兼容 |
-| OpenAPI 生成 | `github.com/oapi-codegen/oapi-codegen/v2` | 契约优先并减少重复 DTO 代码 |
-| SQL 生成 | `github.com/sqlc-dev/sqlc` | 查询增多后提供编译期类型检查 |
+模型通过 OpenAI 兼容 `/chat/completions` 调用。每次最多八轮、十六次工具调用、两分钟；全局最多四个 Agent，同一用户最多一个在途聊天。日报使用独立会话，但共享全局模型容量。
 
-LLM 与向量检索先定义内部端口，再决定使用官方 SDK还是直接调用 OpenAI 兼容 HTTP API。ChromaDB 的数据兼容和迁移成本需要单独验证，不能在调研不足时替换向量引擎。
+唯一工具名为 `bash`，但它**不是系统 Bash**：
 
-## 实施顺序
+```text
+ls /notices [页码]
+grep '关键词' /notices
+cat /notices/<base64url资讯ID>.md
+head /notices/<base64url资讯ID>.md
+```
 
-1. 固定旧版关键响应样例，并补充 OpenAPI 契约测试。
-2. 实现 SQLite 迁移、通知仓储和只读通知接口。
-3. 实现 API Key 摘要校验、设备绑定和限额事务。
-4. 实现管理员认证、设置和投稿审核。
-5. 接入爬虫同步，并保证重复导入幂等。
-6. 最后接入 LLM、向量检索、监控和部署编排。
+解释器拒绝管道、重定向、子命令、宿主路径及未知命令。资讯文件只是数据库读取结果，不落地临时目录，不挂载宿主文件系统。输出、历史与模型响应均有预算限制；客户端不得注入 system/tool 角色。模型端点不跟随重定向，避免凭据外泄。
 
-每个阶段都应运行格式化、静态检查、单元测试和接口兼容测试；不以一次性完整复刻替代可验证的增量迁移。
+服务没有把系统提示词当安全沙箱：真正的边界是工具能力、数据源、认证和预算。模型仍可能产生不准确结论，引用与重要教务事项需要用户复核。
+
+## 后台任务
+
+爬虫栏目配置追踪 `OpenJWC/JwcCrawler`，保留 `SHA-256(详情 URL)` 标识。原生 HTML 解析器处理三个默认站点的栏目、正文及附件链接，不运行浏览器，不下载附件。JWC 列表只接受含两个直接 main 单元格的资讯行，避免把外层布局 tr 重复解析；同一官方主机的 HTTP 重定向被改回 HTTPS，跨站重定向仍拒绝。
+
+可通过 `OPENJWC_CRAWLER_PROGRAMS` 增加最多 16 个显式绝对路径程序。服务以版本化 NDJSON stdin/stdout 适配进程，主程序保留资讯校验、ID 生成、SQLite 写入、任务进度与取消所有权；不使用 shell、PATH 发现、动态库插件或公开推送端点。程序是同一服务账号下的受信任代码，并非安全沙箱。内置与外部来源串行共享单任务闸门、十分钟预算、页数/历史边界和有界输出；详见 [crawler-protocol.md](crawler-protocol.md)。默认关闭定时抓取；已成功记录保留，部分失败明确报告，不用空正文覆盖解析失败的记录。
+
+日报按配置时区在次日生成完整前一日的总结。每批最多八篇资讯，超过一批则再合成；每天最多一百篇，超预算拒绝发布半成品。生成状态持久化，失败可重试，已完成不重复生成。调度器每分钟检查，失败后至少冷却五分钟；停机后的自动补偿目前限前一日，更早日期由 TUI 指定生成。
+
+服务取消会传播到 HTTP、模型和爬虫请求；服务退出时等待其拥有的后台循环，不把失败通过 `os.Exit` 截断在工作协程中。
+
+## 本轮服务与事件扩展
+
+- `internal/service/daemon` 统一封装 systemd 操作，默认用户级；CLI 的本地生命周期入口不经过后台 RPC，所以服务停止后 TUI 仍可显示管理页面。服务状态需 systemd PID 与私有健康接口共同确认。安装记录含明确配置和 unit 摘要，拒绝覆盖外来部署，卸载保留数据。
+- 管理列表返回同一读快照中的总数/页码，过期末页回退；Bubbles 表格处理中文宽度，Vim 普通/插入模式区分业务动作与文本输入。
+- Agent 提供同步事件消费端口，HTTP 使用八事件队列与写入期限施加背压。模型 SSE 分片仅在服务端组装；工具过程即时公开，最终正文确认无工具调用后以 buffered-final 发出。旧适配器仅收集答案，两条 chat 路由共享用户并发限制。
+- VFS 增加类别、月份和近期视图，显式日期/排序过滤及字符偏移续读；详见 [chat-events.md](chat-events.md)。当前只有单一类别字段，不创建文件副本或 embedding。
+- `internal/service/crawljob` 的 Serve 循环由应用工作组拥有。手动请求只排入容量一的队列，调度器同步等待同一队列的独立任务结果；任务上下文来自服务，取消必须匹配任务 ID。来源进度持久化，成功时间统一更新；重启标记遗留运行状态为中断，不自动续跑未完成任务。

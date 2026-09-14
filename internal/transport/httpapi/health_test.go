@@ -10,12 +10,13 @@ import (
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/transport/httpapi"
 )
 
+// TestHealthEndpoint 验证健康检查的状态码及 JSON 契约。
 func TestHealthEndpoint(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 
-	httpapi.NewRouter(logger).ServeHTTP(response, request)
+	httpapi.NewClientRouter(logger, httpapi.ClientDependencies{}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("健康检查状态码错误: %d", response.Code)

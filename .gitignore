@@ -6,7 +6,7 @@
 .vscode/
 
 # 构建与测试产物
-bin/openjwc-api
+/bin/
 coverage.out
 *.test
 

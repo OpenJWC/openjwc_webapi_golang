@@ -7,6 +7,7 @@ import (
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/domain/notice"
 )
 
+// TestNewCopiesAttachments 验证通知不会泄露可变附件集合。
 func TestNewCopiesAttachments(t *testing.T) {
 	attachments := []notice.Attachment{{Name: "日程.pdf", URL: "https://example.com/calendar.pdf"}}
 	item, err := notice.New(notice.CreateInput{

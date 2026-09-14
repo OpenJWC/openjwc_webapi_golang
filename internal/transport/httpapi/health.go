@@ -5,13 +5,7 @@ import (
 	"net/http"
 )
 
-// NewRouter 创建应用的 HTTP 路由器。
-func NewRouter(logger *slog.Logger) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", handleHealth(logger))
-	return mux
-}
-
+// handleHealth 返回不依赖外部网络的进程存活状态。
 func handleHealth(logger *slog.Logger) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		logger.Debug("健康检查请求", "method", request.Method, "path", request.URL.Path)
