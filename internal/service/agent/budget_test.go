@@ -41,7 +41,14 @@ func TestAgentTerminatesRepeatedToolLoop(t *testing.T) {
 	store := agentLibrary(t)
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls.Add(1)
+		index := calls.Add(1)
+		var input modelRequest
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		if index == 9 && (input.ToolChoice == nil || *input.ToolChoice != "none") {
+			t.Error("预算收束调用没有禁用工具")
+		}
 		call := toolCall{ID: "list", Type: "function", Function: toolFunction{Name: "bash", Arguments: `{"command":"ls /notices"}`}}
 		message := modelMessage{Role: "assistant", Calls: []toolCall{call}}
 		_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: message}}})
@@ -50,7 +57,7 @@ func TestAgentTerminatesRepeatedToolLoop(t *testing.T) {
 	if _, err := New(testSettings{url: server.URL}, store).Answer(context.Background(), Request{Query: "持续检索"}); err == nil {
 		t.Fatal("无限工具回环没有被拒绝")
 	}
-	if calls.Load() != 8 {
-		t.Fatalf("模型轮数预算错误: %d", calls.Load())
+	if calls.Load() != 9 {
+		t.Fatalf("模型轮数与收束调用次数错误: %d", calls.Load())
 	}
 }

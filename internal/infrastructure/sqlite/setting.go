@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"sort"
 
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/service/admin"
@@ -62,6 +63,16 @@ func (store *Store) changeSettings(ctx context.Context, request admin.Request) (
 		return admin.Response{}, err
 	}
 	defer tx.Rollback()
+	if request.Action == admin.ActionSetSetting && setting.IsAgentBudgetKey(request.ID) {
+		values, readErr := settingsSnapshot(ctx, tx)
+		if readErr != nil {
+			return admin.Response{}, readErr
+		}
+		values[request.ID] = request.Values["value"]
+		if _, readErr = setting.ParseAgentBudget(values); readErr != nil {
+			return admin.Response{}, readErr
+		}
+	}
 	if request.Action == admin.ActionResetSettings {
 		_, err = tx.ExecContext(ctx, "DELETE FROM system_settings")
 	} else {
@@ -71,4 +82,24 @@ func (store *Store) changeSettings(ctx context.Context, request admin.Request) (
 		return admin.Response{}, err
 	}
 	return commitAdmin(ctx, tx, request)
+}
+
+// settingsSnapshot 读取写事务中的完整设置，确保跨字段预算在提交前保持有效。
+func settingsSnapshot(ctx context.Context, tx *sql.Tx) (map[string]string, error) {
+	values := setting.Defaults()
+	rows, err := tx.QueryContext(ctx, "SELECT key,value FROM system_settings")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err = rows.Scan(&key, &value); err != nil {
+			return nil, err
+		}
+		if _, ok := values[key]; ok {
+			values[key] = value
+		}
+	}
+	return values, rows.Err()
 }

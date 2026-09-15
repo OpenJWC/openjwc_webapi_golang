@@ -25,11 +25,12 @@ type toolFunction struct {
 
 // modelRequest 聚合模型调用参数与工具定义。
 type modelRequest struct {
-	Stream    bool            `json:"stream"`
-	Model     string          `json:"model"`
-	Messages  []modelMessage  `json:"messages"`
-	Tools     json.RawMessage `json:"tools"`
-	MaxTokens int             `json:"max_tokens"`
+	Stream     bool            `json:"stream"`
+	Model      string          `json:"model"`
+	Messages   []modelMessage  `json:"messages"`
+	Tools      json.RawMessage `json:"tools"`
+	ToolChoice *string         `json:"tool_choice,omitempty"`
+	MaxTokens  int             `json:"max_tokens"`
 }
 
 // modelResponse 只解析当前 Agent 使用的模型响应字段。
@@ -40,4 +41,5 @@ type modelResponse struct {
 // modelChoice 包含一次模型生成的消息。
 type modelChoice struct {
 	Message modelMessage `json:"message"`
+	Finish  *string      `json:"finish_reason"`
 }

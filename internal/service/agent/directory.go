@@ -28,6 +28,12 @@ func (vfs *VFS) list(ctx context.Context, args []string) (string, error) {
 		directory = args[2]
 		options = args[3:]
 	}
+	if args[0] == "find" && len(options) >= 2 && options[0] == "-type" {
+		if options[1] != "f" {
+			return "", fmt.Errorf("find 仅支持 -type f")
+		}
+		options = options[2:]
+	}
 	filter, page, err := parseFilter(options)
 	if err != nil {
 		return "", err
@@ -43,7 +49,7 @@ func (vfs *VFS) list(ctx context.Context, args []string) (string, error) {
 		if query != "" {
 			return "", fmt.Errorf("请在具体目录内 grep")
 		}
-		return "/notices/ 稳定规范文件\n/recent/ 最近30个UTC日期（优先入口）\n/by-label/ 类别视图\n/by-date/ 日期视图\nls/grep 可用 --from YYYY-MM-DD --to YYYY-MM-DD --label 类别 --sort newest|relevance --page N；to 包含该日期。cat 文件 [字符偏移] [字符数量] 支持续读。", nil
+		return "/notices/ 稳定规范文件\n/recent/ 最近30个UTC日期（优先入口）\n/by-label/ 类别视图\n/by-date/ 日期视图\nls/find/grep 可用 --from YYYY-MM-DD --to YYYY-MM-DD --label 类别 --sort newest|relevance --page N；find 可选 -type f。cat 文件 [字符偏移] [字符数量] 支持续读；可用单管道 | head -n N。", nil
 	}
 	if directory == "/by-label" {
 		return vfs.labelDirectories(ctx, page)
@@ -75,7 +81,11 @@ func (vfs *VFS) list(ctx context.Context, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return listing(items) + fmt.Sprintf("\n共 %d 条；第 %d/%d 页；排序 %s。没有结果时可扩大日期范围或换用关键词。", total, page, max(1, (total+19)/20), filter.Order), nil
+	output := listing(items)
+	if args[0] == "find" {
+		output = findListing(items)
+	}
+	return output + fmt.Sprintf("\n共 %d 条；第 %d/%d 页；排序 %s。没有结果时可扩大日期范围或换用关键词。", total, page, max(1, (total+19)/20), filter.Order), nil
 }
 
 // parseFilter 校验封闭选项及包含末日的日期范围，默认最新优先。

@@ -23,6 +23,7 @@ func Defaults() map[string]string {
 		"daily_prompt":  "总结今天发布的教务资讯，区分事实与建议，指出重要截止日期以及对学生有用的资讯，并引用资讯 ID 与链接。",
 		"daily_enabled": "false", "daily_time": "00:10", "timezone": "Asia/Shanghai",
 		"crawler_enabled": "false", "crawler_interval_minutes": "480", "crawler_sites": "jwc,cs,xsxy", "crawler_max_pages": "100", "crawler_days_gap": "200",
+		"agent_max_model_rounds": "8", "agent_max_tool_calls": "16", "agent_max_tools_per_round": "4", "agent_max_tool_result_bytes": "16000", "agent_max_total_tool_bytes": "96000", "agent_model_timeout_seconds": "45", "agent_run_timeout_seconds": "120",
 		"motto_text": "笃学尚行", "motto_author": "", "submission_max_length": "10000",
 	}
 }
@@ -80,6 +81,10 @@ func Validate(key string, value string) error {
 	case "llm_model", "system_prompt", "daily_prompt":
 		if value == "" {
 			return fmt.Errorf("模型或提示词不能为空")
+		}
+	default:
+		if IsAgentBudgetKey(key) {
+			return ValidateAgentBudgetValue(key, value)
 		}
 	}
 	return nil

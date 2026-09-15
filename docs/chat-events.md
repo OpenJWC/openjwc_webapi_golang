@@ -4,7 +4,7 @@
 
 - `POST /api/v1/client/chat`：保留旧 JSON 回复和 Android raw-text SSE 格式，只有答案和旧心跳，不插入工具 JSON。
 - `POST /api/v2/client/chat`：标准 SSE + JSON，始终返回事件流，输入的 `stream` 不改变此端点的响应类型。
-- 两者要求当前浏览及问答权限，共用每用户一个在途请求、全局四个 Agent、八轮、十六工具调用和两分钟预算。
+- 两者要求当前浏览及问答权限，共用每用户一个在途请求与全局四个 Agent。轮数、工具数、工具结果和超时由本地管理员在系统设置中调整，但始终受编译期硬上限约束。
 - 没有向量数据库或 embedding。独立 `/api/v1/client/notices/search` 继续为快速词法检索，不调用模型。实际旧字段 `similarity_score=1`、`distance=0` 是弃用占位，不是相似度、距离或置信度；`min_similarity` 只沿用占位值筛选逻辑。响应头明确 `X-OpenJWC-Search-Mode: lexical` 和 `X-OpenJWC-Similarity: deprecated-placeholder`。
 
 ## 事件格式
@@ -20,20 +20,24 @@ data: {"version":1,"run_id":"...","sequence":2,"type":"tool.started","tool_id":"
 | --- | --- |
 | `run.started` | 已进入一次事件运行；包含答案交付方式 |
 | `tool.started` | 工具尝试开始，参数摘要已通过基础校验，最终路径与参数仍可能被工具拒绝 |
-| `tool.completed` | 对应工具结束；同一 `tool_id`，状态为 completed 或 failed，可含 duration_ms |
-| `answer.delta` | 可展示的最终答案文本 |
+| `tool.completed` | 对应工具结束；同一 `tool_id`，状态为 completed 或 failed，可含安全 code 与 duration_ms |
+| `answer.delta` | 可展示的最终答案文本；delivery 指明 buffered-final 或 streaming-final |
 | `run.completed` | 运行成功终止 |
 | `run.failed` | 运行失败终止，稳定 code 和安全摘要，不泄露供应商响应 |
 
 版本为 1；sequence 从 1 单调递增，run_id 每次独立，tool_id 在运行内唯一。工具失败可以作为观察交给模型继续检索，不等于整个运行失败。心跳是 `: ping` 注释，无需展示。SSE id 仅用于定位，不支持重放或断线续跑。
 
-**当前答案交付是 `delivery: buffered-final`。** 模型端已支持 SSE 分片和工具参数组装，但工具调用可能在同轮 content 后才出现；为了不把工具轮中间正文当作答案暴露，等待最终轮结束后发送一个完整答案片段。工具进度实时发送；这不是逐 token 答案 UI。未来若增加确定不调用工具的最终生成阶段，才可以安全改变交付策略。
+工具可用轮始终使用 `delivery: buffered-final`：模型可能在同轮 content 后才声明工具调用，不能提前公开中间正文。若工具轮数、工具调用数或累计工具结果预算耗尽，服务端只会额外尝试一次 `tool_choice: none` 的收束回答；该轮 SSE 分片以 `delivery: streaming-final` 真实转发。收束轮不能调用工具，也不会在模型不可用、协议错误、取消或总超时后重试。非流式供应商回退仍标记 `buffered-final`。
 
-流开始前的身份、参数和每用户容量错误使用 HTTP 状态码。开始后的错误使用 `run.failed`；连接中断而没有终止事件应显示“未完成”，不能把已有文本当作成功答案。断连会取消该请求；队列最多八个事件，每次网络写入有十秒期限。
+管理员可在本地 TUI 设置 `agent_max_model_rounds`、`agent_max_tool_calls`、`agent_max_tools_per_round`、`agent_max_tool_result_bytes`、`agent_max_total_tool_bytes`、`agent_model_timeout_seconds` 与 `agent_run_timeout_seconds`。移动端请求不能修改它们；每项均有编译期硬上下限，且累计工具结果不得低于单次上限、总超时不得低于模型超时。
 
-客户端只渲染工具名称、受限摘要、耗时、状态及答案；不应使用 innerHTML。协议不包含隐藏思考、系统提示词、完整工具正文或模型凭据。
+流开始前的身份、参数和每用户容量错误使用 HTTP 状态码。开始后的错误使用 `run.failed`；连接中断而没有终止事件应显示“未完成”，不能把已有文本当作成功答案。`streaming-final` 已发出的分片若随后收到 `run.failed`，同样属于未完成，不能保存为成功答案。断连会取消该请求；队列最多八个事件，每次网络写入有十秒期限。
+
+客户端只渲染工具名称、受限摘要、耗时、状态、安全 code 及答案；不应使用 innerHTML。协议不包含隐藏思考、系统提示词、完整工具正文或模型凭据。工具轨迹只属于本地展示状态，不能写回下一轮 history；history 只允许已完成的 user/assistant 消息。
 
 ## 客户端消费示例
+
+Android Kotlin 客户端的登录、OkHttp POST SSE、协议状态机、ViewModel、错误处理和 v1 迁移方案见 [`android-agent-chat.md`](android-agent-chat.md)。
 
 下面只展示协议接入，不代表仓库之外的 Android 或机器人客户端已经完成适配：
 
@@ -148,12 +152,15 @@ ls /by-label
 ls /by-label/<URL编码类别>
 ls /by-date
 ls /by-date/2026/09
-grep '考试' /notices --from 2026-09-01 --to 2026-09-30 --sort newest
+find /recent -type f
+grep '考试' /notices --from 2026-09-01 --to 2026-09-30 --sort newest | head -n 10
 ls /notices --label '教务信息' --page 2
+head -n 20 /notices/<编码>.md
 cat /notices/<编码>.md 12000 12000
 ```
 
 - 默认最新优先，可显式选择 `relevance`；词法匹配由 FTS5/BM25 或短词子串查询实现。
+- `find` 仅列出虚拟目录中的规范资讯文件，可选 `-type f`；最多一个管道，且右侧只能为 `head -n N` 或 `head -N`。它们都由 Go 的 VFS 解释，不执行宿主 Shell、不支持重定向、变量、命令替换、`-exec` 或宿主路径。
 - `--to` 包含当天；近期目录为最近 30 个 UTC 日期；月份目录按实际数据覆盖范围生成，可能存在空月份。
 - 路径范围与显式日期求交集，不能通过参数越过目录含义；最多每页 20 条。
 - 资讯 ID 不随目录变化；类别仍采用数据库当前单个 label，不引入多标签模型。

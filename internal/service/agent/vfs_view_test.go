@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,35 @@ func TestVFSViewsFilterByCategoryDateAndRecentWindow(t *testing.T) {
 	metadata, err := vfs.Metadata(ctx, "Asia/Shanghai")
 	if err != nil || !strings.Contains(metadata, "2026-09-14T08:00:00+08:00") || !strings.Contains(metadata, "尚无完整成功抓取记录") {
 		t.Fatalf("检索时间不准确: %s %v", metadata, err)
+	}
+}
+
+// TestVFSFindAndPipelineStayInsideVirtualViews 验证受限 find 与单管道不会触及宿主路径。
+func TestVFSFindAndPipelineStayInsideVirtualViews(t *testing.T) {
+	store := agentLibrary(t)
+	ctx := context.Background()
+	for index := 0; index < 4; index++ {
+		item, err := notice.New(notice.CreateInput{ID: fmt.Sprintf("find-%d", index), Title: "考试安排", PublishedAt: time.Now(), DetailURL: "https://example.com/find", Content: "资讯正文"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Save(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vfs := NewVFS(store)
+	output, err := vfs.Execute(ctx, "find /notices -type f | head -n 2")
+	if err != nil || strings.Count(output, "/notices/") != 2 {
+		t.Fatalf("find 管道结果错误: %q %v", output, err)
+	}
+	output, err = vfs.Execute(ctx, "head -2 "+FilePath("notice"))
+	if err != nil || !strings.Contains(output, "ID: notice") {
+		t.Fatalf("head 常用参数错误: %q %v", output, err)
+	}
+	for _, command := range []string{"find /etc -type f", "find /notices -exec cat {}", "find /notices | grep 考试", "find /notices | head -n 0", "find /notices | head -n 2 | head -n 1"} {
+		if _, err = vfs.Execute(ctx, command); err == nil {
+			t.Errorf("不安全或超出范围的 VFS 命令被接受: %s", command)
+		}
 	}
 }
 

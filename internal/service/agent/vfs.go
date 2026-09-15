@@ -33,19 +33,43 @@ func FilePath(id string) string {
 	return "/notices/" + base64.RawURLEncoding.EncodeToString([]byte(id)) + ".md"
 }
 
-// Execute 解释有限的只读命令，目录仅映射查询而非宿主路径。
+// Execute 解释受限的只读 VFS 命令，目录仅映射查询而非宿主路径。
 func (vfs *VFS) Execute(ctx context.Context, command string) (string, error) {
-	args, err := splitCommand(command)
+	parts, err := splitPipeline(command)
 	if err != nil {
 		return "", err
 	}
+	if len(parts) == 1 {
+		return vfs.executeCommand(ctx, parts[0])
+	}
+	if parts[1][0] != "head" {
+		return "", fmt.Errorf("管道末端只能使用 head")
+	}
+	lines, err := pipelineHeadArgs(parts[1])
+	if err != nil {
+		return "", err
+	}
+	if parts[0][0] == "head" {
+		return "", fmt.Errorf("head 不能作为管道左侧命令")
+	}
+	output, err := vfs.executeCommand(ctx, parts[0])
+	if err != nil {
+		return "", err
+	}
+	return headLines(output, lines), nil
+}
+
+// executeCommand 执行一个已经完成管道语法校验的单独 VFS 命令。
+func (vfs *VFS) executeCommand(ctx context.Context, args []string) (string, error) {
 	switch args[0] {
-	case "ls", "grep":
+	case "ls", "grep", "find":
 		return vfs.list(ctx, args)
-	case "cat", "head":
+	case "cat":
 		return vfs.read(ctx, args)
+	case "head":
+		return vfs.head(ctx, args)
 	default:
-		return "", fmt.Errorf("仅支持 ls、grep、cat、head，不支持 shell、管道或重定向")
+		return "", fmt.Errorf("仅支持 ls、find、grep、cat、head")
 	}
 }
 
@@ -55,7 +79,16 @@ func listing(items []notice.Notice) string {
 	for _, item := range items {
 		fmt.Fprintf(&output, "%s\tID=%s\t%s\t%s\t%s\n", FilePath(item.ID()), item.ID(), item.PublishedAt().Format("2006-01-02"), clipRunes(item.Label(), 60), clipRunes(item.Title(), 200))
 	}
-	return clipRunes(output.String(), maxToolResultRunes)
+	return clipRunes(output.String(), maxListingRunes)
+}
+
+// findListing 仅输出可被 cat 使用的规范文件路径，模拟受限 find -type f 视图。
+func findListing(items []notice.Notice) string {
+	var output strings.Builder
+	for _, item := range items {
+		output.WriteString(FilePath(item.ID()) + "\n")
+	}
+	return clipRunes(output.String(), maxListingRunes)
 }
 
 // Metadata 返回真实覆盖范围、抓取时间和当前时间，不承诺资讯业务上仍有效。
@@ -94,11 +127,27 @@ func (vfs *VFS) labelDirectories(ctx context.Context, page int) (string, error) 
 	return output.String(), nil
 }
 
-// clipRunes 按 Unicode 字符截断工具结果，不破坏 UTF-8 编码。
+// clipRunes 按 Unicode 字符截断目录元数据，不破坏 UTF-8 编码。
 func clipRunes(text string, limit int) string {
 	runes := []rune(text)
 	if len(runes) > limit {
 		return string(runes[:limit]) + "\n[内容已截断]"
 	}
 	return text
+}
+
+// clipUTF8 按 UTF-8 字节截断模型工具观察，并为截断说明预留空间。
+func clipUTF8(text string, limit int) string {
+	const suffix = "\n[内容已截断]"
+	if len(text) <= limit {
+		return text
+	}
+	if limit <= len(suffix) {
+		return suffix[:limit]
+	}
+	cut := limit - len(suffix)
+	for cut > 0 && (text[cut]&0xc0) == 0x80 {
+		cut--
+	}
+	return text[:cut] + suffix
 }

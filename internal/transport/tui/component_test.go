@@ -32,6 +32,18 @@ func TestTableSeparatorsAlignWithWideCharacters(t *testing.T) {
 	}
 }
 
+// TestTableViewKeepsSelectedRowVisibleBeyondViewport 验证重建表格后选中行不会留在可视窗口外。
+func TestTableViewKeepsSelectedRowVisibleBeyondViewport(t *testing.T) {
+	rows := [][]string{{"row-1"}, {"row-2"}, {"row-3"}, {"row-4"}, {"row-5"}}
+	for _, row := range []int{2, 3, 4} {
+		model := Model{width: 80, height: 18, row: row, result: admin.Response{Columns: []string{"标题"}, Rows: rows}}
+		view := model.tableView()
+		if !strings.Contains(view, rows[row][0]) {
+			t.Fatalf("选中第 %d 行后仍不可见:\n%s", row+1, view)
+		}
+	}
+}
+
 // TestVimNavigationDoesNotTriggerDigest 验证 gg 只移动光标，普通模式不会输入表单内容。
 func TestVimNavigationDoesNotTriggerDigest(t *testing.T) {
 	model := Model{navigation: menus, row: 1, result: admin.Response{Rows: [][]string{{"first"}, {"last"}}}}

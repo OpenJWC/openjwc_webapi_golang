@@ -45,9 +45,9 @@ func (model Model) tableView() string {
 		}
 		rows = append(rows, row)
 	}
-	view := table.New(table.WithColumns(columns), table.WithRows(rows), table.WithHeight(max(1, model.height-14)), table.WithWidth(available), table.WithFocused(true))
+	view := table.New(table.WithColumns(columns), table.WithRows(rows), table.WithHeight(max(2, model.height-14)), table.WithWidth(available), table.WithFocused(true))
 	cell := lipgloss.NewStyle().Padding(0, 1).BorderStyle(lipgloss.NormalBorder()).BorderRight(true)
 	view.SetStyles(table.Styles{Header: cell.Bold(true), Cell: cell, Selected: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))})
-	view.SetCursor(model.row)
+	view.MoveDown(model.row)
 	return view.View()
 }

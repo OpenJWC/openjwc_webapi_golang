@@ -66,6 +66,7 @@ func (client *Client) serveEvents(writer http.ResponseWriter, request *http.Requ
 			return
 		case event, open := <-events:
 			if !open {
+				client.logChatFailure(runErr, started)
 				if !started && runErr != nil {
 					client.chatError(writer, runErr)
 				}
@@ -88,6 +89,19 @@ func (client *Client) serveEvents(writer http.ResponseWriter, request *http.Requ
 			}
 		}
 	}
+}
+
+// logChatFailure 仅记录经过分类的计数与运行标识，不记录请求或模型内容。
+func (client *Client) logChatFailure(err error, started bool) {
+	if err == nil || !started {
+		return
+	}
+	var failure *agent.Failure
+	if errors.As(err, &failure) {
+		client.logger.Warn("Agent 运行未完成", "run_id", failure.RunID, "code", failure.Code, "model_rounds", failure.ModelRounds, "tool_calls", failure.ToolCalls, "tool_result_bytes", failure.ToolResultBytes)
+		return
+	}
+	client.logger.Warn("Agent 事件流未完成", "code", "agent_event_delivery_failed")
 }
 
 // writeEvent 将换行和特殊字符编码进 JSON，事件编号可以定位但不支持断点重放。

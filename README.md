@@ -59,7 +59,7 @@ curl http://127.0.0.1:8080/healthz
 
 1. 在客户端提交注册申请，在「注册审核」页面批准。
 2. 在「用户权限」页面独立配置启用、浏览资讯、智能问答、投稿和设备上限。新用户默认允许资讯与投稿，**问答默认关闭**；问答同时要求资讯权限。
-3. 在「系统设置」配置 `llm_base_url`、`llm_api_key`、`llm_model` 和 `system_prompt`。服务端点填写 API 前缀，例如 `https://api.openai.com/v1`。
+3. 在「系统设置」配置 `llm_base_url`、`llm_api_key`、`llm_model` 和 `system_prompt`。服务端点填写 API 前缀，例如 `https://api.openai.com/v1`；`agent_` 前缀设置可调整轮数、工具数、结果字节数和超时，但始终受编译期硬上限约束。
 4. 在「爬虫任务」启动后台抓取，按 `r` 查询来源进度，或启用 `crawler_enabled`。
 5. 配置 `daily_enabled=true`；默认 `Asia/Shanghai` 每天 `00:10` 生成**前一日**日报。`daily_prompt` 控制日报侧重。
 6. API Key 创建后仅显示一次；通过「API Key」页面的 `b` 关联用户。关联后继承该用户的最新权限，并按密钥自身配额绑定设备。
@@ -118,6 +118,7 @@ bin/openjwc licenses
 
 - [服务安装、启停与卸载](docs/service.md)
 - [Chat 事件、客户端示例、VFS 与本地测试](docs/chat-events.md)
+- [Android Kotlin Agent Chat 接入指南](docs/android-agent-chat.md)
 - [外部爬虫 NDJSON v1 协议](docs/crawler-protocol.md)
 - [架构](docs/architecture.md)
 - [迁移与兼容差异](docs/migration.md)
