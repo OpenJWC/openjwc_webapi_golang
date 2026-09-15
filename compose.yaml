@@ -1,0 +1,19 @@
+services:
+  openjwc:
+    build:
+      context: .
+      args:
+        VERSION: local
+    image: openjwc:local
+    restart: unless-stopped
+    environment:
+      OPENJWC_DATA_DIR: /var/lib/openjwc
+      OPENJWC_HTTP_ADDRESS: 0.0.0.0:8080
+    # 默认只绑定回环地址，公网访问请配置 TLS 或前置反向代理。
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - openjwc-data:/var/lib/openjwc
+
+volumes:
+  openjwc-data:

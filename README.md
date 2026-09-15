@@ -118,6 +118,7 @@ bin/openjwc licenses
 测试使用临时数据库和模拟模型，不访问仓库 `data/`、真实账号或收费模型。中文注释和文件行数规则由 `internal/quality/style_test.go` 自动检查。
 
 - [服务安装、启停与卸载](docs/service.md)
+- [容器部署](docs/docker.md)
 - [Chat 事件、客户端示例、VFS 与本地测试](docs/chat-events.md)
 - [Android Kotlin Agent Chat 接入指南](docs/android-agent-chat.md)
 - [外部爬虫 NDJSON v1 协议](docs/crawler-protocol.md)
