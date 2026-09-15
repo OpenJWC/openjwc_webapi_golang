@@ -76,7 +76,7 @@ sudo systemctl start openjwc
 
 ## 后续兼容扩展
 
-旧 chat 继续使用原格式，内部是 Agentic 检索，不保证旧 RAG 的召回等价。新的 `/api/v2/client/chat` 单独承载 JSON 工具事件；工具轮答案为 buffered-final，预算收束轮可为 streaming-final。现有客户端不升级也不会收到混入正文的工具 JSON。
+旧 chat 继续使用原格式，内部是 Agentic 检索，不保证旧 RAG 的召回等价。新的 `/api/v2/client/chat` 单独承载 JSON 工具事件；工具轮正文不公开，所有最终回答经禁用工具的流式轮生成（streaming-final）。现有客户端不升级也不会收到混入正文的工具 JSON。
 
 独立旧搜索不调用 LLM、不增加问答权限要求。新增响应头明确词法模式，旧分数/距离仅为兼容占位并在契约中标记弃用。没有新增独立 v2 搜索接口。
 

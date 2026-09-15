@@ -359,8 +359,8 @@ paths:
       description: >-
         标准 SSE + JSON，只提供事件流；stream 字段不改变本接口响应类型。
         与旧 chat 共享身份、资讯和问答权限、每用户并发限制及 Agent 预算。
-        工具轮内容始终缓冲，避免暴露可能附带工具调用的中间正文；正常最终回答标记 buffered-final。
-        仅在工具、轮数或工具结果预算耗尽时，服务端会发起一次禁用工具的收束调用，并可用 streaming-final 发送真实文本分片。
+        工具轮内容始终缓冲，避免暴露可能附带工具调用的中间正文；所有最终回答都经一次禁用工具的流式轮生成，
+        以 streaming-final 真实逐字转发，仅当供应商返回整段 JSON 时才回退为 buffered-final。
         事件版本为 1，sequence 在 run_id 内从 1 递增，工具开始与结束使用同一 tool_id。
         run.completed/run.failed 为终止事件；连接提前关闭且没有终止事件视为未完成。
         id 字段仅用于定位，不支持 Last-Event-ID 重放；心跳为 SSE 注释。

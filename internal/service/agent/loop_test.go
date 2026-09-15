@@ -63,6 +63,7 @@ func TestVFSRejectsShellEscapeAndHostPaths(t *testing.T) {
 // TestAgentUsesToolObservationsAndIsolatesConcurrentHistories 验证真正的工具回环及不同请求之间不共享消息。
 func TestAgentUsesToolObservationsAndIsolatesConcurrentHistories(t *testing.T) {
 	store := agentLibrary(t)
+	expected := map[string]bool{"用户甲": true, "用户乙": true, "用户丙": true, "用户丁": true}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		var input modelRequest
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
@@ -72,26 +73,33 @@ func TestAgentUsesToolObservationsAndIsolatesConcurrentHistories(t *testing.T) {
 		if request.Header.Get("Authorization") != "Bearer test-only" {
 			t.Error("模型凭据缺失")
 		}
-		query := ""
+		seen := ""
 		for _, message := range input.Messages {
-			if message.Role == "user" {
-				if query != "" {
+			if message.Role == "user" && expected[message.Content] {
+				if seen != "" && seen != message.Content {
 					t.Error("不同会话混入同一历史")
 				}
-				query = message.Content
+				seen = message.Content
 			}
 		}
-		last := input.Messages[len(input.Messages)-1]
-		if last.Role != "tool" {
-			call := toolCall{ID: "read", Type: "function", Function: toolFunction{Name: "bash", Arguments: `{"command":"cat ` + FilePath("notice") + `"}`}}
-			message := modelMessage{Role: "assistant", Calls: []toolCall{call}}
-			_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: message}}})
+		if seen == "" {
+			t.Error("缺少用户查询")
+		}
+		if input.ToolChoice != nil {
+			_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: modelMessage{Role: "assistant", Content: seen + "：星期一"}}}})
 			return
 		}
-		if !strings.Contains(last.Content, "星期一") {
-			t.Error("模型未收到工具观察")
+		last := input.Messages[len(input.Messages)-1]
+		if last.Role == "tool" {
+			if !strings.Contains(last.Content, "星期一") {
+				t.Error("模型未收到工具观察")
+			}
+			_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: modelMessage{Role: "assistant", Content: "草稿"}}}})
+			return
 		}
-		_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: modelMessage{Role: "assistant", Content: query + "：星期一"}}}})
+		call := toolCall{ID: "read", Type: "function", Function: toolFunction{Name: "bash", Arguments: `{"command":"cat ` + FilePath("notice") + `"}`}}
+		message := modelMessage{Role: "assistant", Calls: []toolCall{call}}
+		_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: message}}})
 	}))
 	defer server.Close()
 	loop := New(testSettings{url: server.URL}, store)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,50 @@ func (settings budgetSettings) Settings(ctx context.Context) (map[string]string,
 	values["llm_api_key"] = "test-only"
 	values["agent_max_model_rounds"] = "1"
 	return values, nil
+}
+
+// TestSimpleQuestionStreamsViaFinalizer 验证无需工具的问题也经禁用工具流式轮逐字输出。
+func TestSimpleQuestionStreamsViaFinalizer(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var input modelRequest
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Error(err)
+			return
+		}
+		calls++
+		if input.ToolChoice == nil {
+			_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: modelMessage{Content: "被抑制的草稿"}}}})
+			return
+		}
+		writer.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(writer, `data: {"choices":[{"index":0,"delta":{"content":"你好"}}]}`+"\n\n")
+		fmt.Fprint(writer, `data: {"choices":[{"index":0,"delta":{"content":"，很高兴"},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+	var events []Event
+	err := New(testSettings{url: server.URL}, agentLibrary(t)).Events(context.Background(), Request{Query: "你好"}, func(ctx context.Context, event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("简单问题请求次数错误: %d", calls)
+	}
+	var answer strings.Builder
+	var delivery string
+	for _, event := range events {
+		if event.Type == AnswerDelta {
+			answer.WriteString(event.Text)
+			delivery = event.Delivery
+		}
+	}
+	if answer.String() != "你好，很高兴" || delivery != "streaming-final" {
+		t.Fatalf("简单问题未真正流式: %q %s", answer.String(), delivery)
+	}
 }
 
 // TestBudgetFinalizerStreamsBeforeUpstreamCompletion 验证预算收束时最终模型分片会在上游完成前发给客户端。

@@ -12,9 +12,18 @@ import (
 
 // TestModelRetryRecoversFromTransientUpstreamFailure 验证瞬时上游 5xx 只重试一次并可恢复。
 func TestModelRetryRecoversFromTransientUpstreamFailure(t *testing.T) {
-	var calls atomic.Int64
+	var finals atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if calls.Add(1) == 1 {
+		var input modelRequest
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Error(err)
+			return
+		}
+		if input.ToolChoice == nil {
+			_ = json.NewEncoder(writer).Encode(modelResponse{Choices: []modelChoice{{Message: modelMessage{Role: "assistant", Content: "草稿"}}}})
+			return
+		}
+		if finals.Add(1) == 1 {
 			writer.Header().Set("Retry-After", "1")
 			http.Error(writer, "busy", http.StatusInternalServerError)
 			return
@@ -26,8 +35,8 @@ func TestModelRetryRecoversFromTransientUpstreamFailure(t *testing.T) {
 	if err != nil || answer != "重试后答案" {
 		t.Fatalf("瞬时故障未恢复: %q %v", answer, err)
 	}
-	if calls.Load() != 2 {
-		t.Fatalf("重试次数错误: %d", calls.Load())
+	if finals.Load() != 2 {
+		t.Fatalf("收束请求重试次数错误: %d", finals.Load())
 	}
 }
 

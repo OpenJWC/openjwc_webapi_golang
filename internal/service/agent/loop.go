@@ -105,25 +105,22 @@ func (loop *Loop) run(parent context.Context, request Request, writer *eventWrit
 		message, err := loop.complete(ctx, values, messages, budget)
 		if err != nil {
 			if errors.Is(err, errFinishLength) {
-				return loop.finalizeBudget(ctx, values, messages, writer, budget, usage, finalizeAnswerCut)
+				return loop.finalizeWithLimit(ctx, values, messages, writer, budget, usage, finalizeAnswerCut)
 			}
 			return usage, err
 		}
 		if len(message.Content) > maxModelContentBytes || len(message.Calls) > budget.MaxToolsPerRound {
-			return loop.finalizeBudget(ctx, values, messages, writer, budget, usage, finalizeRoundLimit)
+			return loop.finalizeWithLimit(ctx, values, messages, writer, budget, usage, finalizeRoundLimit)
 		}
 		message.Role, message.CallID = "assistant", ""
 		if len(message.Calls) == 0 {
-			if strings.TrimSpace(message.Content) == "" {
-				return usage, &modelError{Kind: "empty_content", Base: ErrUnavailable}
-			}
-			return usage, writer.send(ctx, Event{Type: AnswerDelta, Text: message.Content, Delivery: "buffered-final"})
+			return loop.finalizeAnswer(ctx, values, messages, writer, budget, usage)
 		}
 		messages = append(messages, message)
 		for index, call := range message.Calls {
 			if usage.toolCalls >= budget.MaxToolCalls {
 				messages = appendBudgetObservations(messages, message.Calls[index:], finalizeToolLimit)
-				return loop.finalizeBudget(ctx, values, messages, writer, budget, usage, finalizeToolLimit)
+				return loop.finalizeWithLimit(ctx, values, messages, writer, budget, usage, finalizeToolLimit)
 			}
 			usage.toolCalls++
 			output, observeErr := loop.observe(ctx, call, usage.toolCalls, budget.MaxToolResultBytes, writer)
@@ -134,16 +131,26 @@ func (loop *Loop) run(parent context.Context, request Request, writer *eventWrit
 			messages = append(messages, modelMessage{Role: "tool", CallID: call.ID, Content: output})
 			if usage.toolResultBytes > budget.MaxTotalToolBytes {
 				messages = appendBudgetObservations(messages, message.Calls[index+1:], finalizeOutputLimit)
-				return loop.finalizeBudget(ctx, values, messages, writer, budget, usage, finalizeOutputLimit)
+				return loop.finalizeWithLimit(ctx, values, messages, writer, budget, usage, finalizeOutputLimit)
 			}
 		}
 	}
-	return loop.finalizeBudget(ctx, values, messages, writer, budget, usage, finalizeRoundLimit)
+	return loop.finalizeWithLimit(ctx, values, messages, writer, budget, usage, finalizeRoundLimit)
 }
 
-// finalizeBudget 请求一次禁用工具的收束回答，绝不恢复工具执行。
-func (loop *Loop) finalizeBudget(ctx context.Context, values map[string]string, messages []modelMessage, writer *eventWriter, budget setting.AgentBudget, usage runUsage, reason finalizationReason) (runUsage, error) {
-	messages = append(messages, modelMessage{Role: "user", Content: "检索或回答生成已因资源限制停止（" + string(reason) + "）。不得调用工具；仅依据已有资讯证据给出简洁结论、已知限制和可行的下一步。"})
+// finalizeAnswer 请求一次禁用工具的流式最终回答，所有正常总结都经由此路径。
+func (loop *Loop) finalizeAnswer(ctx context.Context, values map[string]string, messages []modelMessage, writer *eventWriter, budget setting.AgentBudget, usage runUsage) (runUsage, error) {
+	return loop.publishFinal(ctx, values, messages, writer, budget, usage, "请基于以上检索到的资讯证据，给出最终回答，引用资讯 ID、日期与链接；不确定时明确说明。")
+}
+
+// finalizeWithLimit 在预算或长度限制下请求一次禁用工具的收束回答。
+func (loop *Loop) finalizeWithLimit(ctx context.Context, values map[string]string, messages []modelMessage, writer *eventWriter, budget setting.AgentBudget, usage runUsage, reason finalizationReason) (runUsage, error) {
+	return loop.publishFinal(ctx, values, messages, writer, budget, usage, "检索或回答生成已因资源限制停止（"+string(reason)+"）。不得调用工具；仅依据已有资讯证据给出简洁结论、已知限制和可行的下一步。")
+}
+
+// publishFinal 发送最终回答，SSE 时真实流式，非流式供应商则整体缓冲。
+func (loop *Loop) publishFinal(ctx context.Context, values map[string]string, messages []modelMessage, writer *eventWriter, budget setting.AgentBudget, usage runUsage, instruction string) (runUsage, error) {
+	messages = append(messages, modelMessage{Role: "user", Content: instruction})
 	buffered, streamed, err := loop.finalize(ctx, values, messages, budget, func(text string) error {
 		return writer.send(ctx, Event{Type: AnswerDelta, Text: text, Delivery: "streaming-final"})
 	})

@@ -27,7 +27,7 @@ data: {"version":1,"run_id":"...","sequence":2,"type":"tool.started","tool_id":"
 
 版本为 1；sequence 从 1 单调递增，run_id 每次独立，tool_id 在运行内唯一。工具失败可以作为观察交给模型继续检索，不等于整个运行失败。心跳是 `: ping` 注释，无需展示。SSE id 仅用于定位，不支持重放或断线续跑。
 
-工具可用轮始终使用 `delivery: buffered-final`：模型可能在同轮 content 后才声明工具调用，不能提前公开中间正文。若工具轮数、工具调用数或累计工具结果预算耗尽，服务端只会额外尝试一次 `tool_choice: none` 的收束回答；该轮 SSE 分片以 `delivery: streaming-final` 真实转发。收束轮不能调用工具，也不会在模型不可用、协议错误、取消或总超时后重试。非流式供应商回退仍标记 `buffered-final`。
+工具轮的正文从不公开：模型可能在同轮 content 后才声明工具调用，只有等该轮结束才能判断是否为最终回答。因此所有最终回答都通过一次 `tool_choice: none` 的禁用工具请求生成，该轮 SSE 分片以 `delivery: streaming-final` 真实逐字转发；仅当供应商不支持 SSE、返回整段 JSON 时才回退为 `buffered-final`。工具轮数、工具调用数或累计工具结果预算耗尽时，收束轮同样走这条禁用工具流式路径，只是附带“仅依据已有证据、不得调用工具”的提示。收束轮不会在模型不可用、协议错误、取消或总超时后重试。
 
 管理员可在本地 TUI 设置 `agent_max_model_rounds`、`agent_max_tool_calls`、`agent_max_tools_per_round`、`agent_max_tool_result_bytes`、`agent_max_total_tool_bytes`、`agent_model_timeout_seconds` 与 `agent_run_timeout_seconds`。移动端请求不能修改它们；每项均有编译期硬上下限，且累计工具结果不得低于单次上限、总超时不得低于模型超时。
 
