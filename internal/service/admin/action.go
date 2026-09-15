@@ -35,6 +35,8 @@ const (
 	ActionCheck              Action = "check"
 	ActionBackup             Action = "backup"
 	ActionCrawl              Action = "crawl"
+	ActionCrawlerConfig      Action = "crawler-config"
+	ActionSetCrawlerConfig   Action = "set-crawler-config"
 	ActionDigest             Action = "digest"
 	ActionImportUsers        Action = "import-users"
 	ActionReports            Action = "reports"
@@ -55,7 +57,7 @@ func (action Action) Valid() bool {
 		ActionResetSettings, ActionNotices, ActionDeleteNotice, ActionSubmissions, ActionReviewSubmission,
 		ActionStats, ActionAudit, ActionCheck, ActionBackup, ActionCrawl, ActionDigest, ActionImportUsers,
 		ActionReports, ActionLinkKey, ActionRebuildIndex, ActionLogs, ActionNoticeDetail,
-		ActionSubmissionDetail, ActionReportDetail:
+		ActionSubmissionDetail, ActionReportDetail, ActionCrawlerConfig, ActionSetCrawlerConfig:
 		return true
 	default:
 		return false

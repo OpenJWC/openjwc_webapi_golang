@@ -64,6 +64,19 @@ func (store *Store) DailyContent(ctx context.Context, day string) (string, bool,
 	return content, err == nil, err
 }
 
+// LatestDaily 返回不晚于指定日期的最近一份已完成日报。
+func (store *Store) LatestDaily(ctx context.Context, before string) (string, string, bool, error) {
+	if _, err := time.Parse("2006-01-02", before); err != nil {
+		return "", "", false, err
+	}
+	var day, content string
+	err := store.reader.QueryRowContext(ctx, "SELECT day,content FROM daily_reports WHERE status='completed' AND day<=? ORDER BY day DESC LIMIT 1", before).Scan(&day, &content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	return day, content, err == nil, err
+}
+
 // JobSuccess 返回后台任务最近一次成功时间。
 func (store *Store) JobSuccess(ctx context.Context, name string) (time.Time, error) {
 	var value string

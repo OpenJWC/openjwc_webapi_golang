@@ -16,7 +16,7 @@ func TestDocumentedClientRoutesAreRegistered(t *testing.T) {
 	}
 	pattern := regexp.MustCompile(`(?m)^  (/[^\n]*):\n    (get|post):`)
 	matches := pattern.FindAllStringSubmatch(string(content), -1)
-	if len(matches) != 18 {
+	if len(matches) != 19 {
 		t.Fatalf("契约路径数量意外变化: %d", len(matches))
 	}
 	for _, match := range matches {

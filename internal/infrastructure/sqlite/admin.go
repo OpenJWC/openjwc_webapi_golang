@@ -52,6 +52,10 @@ func (store *Store) Execute(ctx context.Context, request admin.Request) (admin.R
 		return store.adminMutation(ctx, request)
 	case admin.ActionImportUsers:
 		return store.ImportUsers(ctx, request.ID)
+	case admin.ActionCrawlerConfig:
+		return store.crawlerConfigsTable(ctx)
+	case admin.ActionSetCrawlerConfig:
+		return store.setCrawlerConfig(ctx, request)
 	case admin.ActionRebuildIndex:
 		return store.rebuildIndex(ctx, request)
 	case admin.ActionCheck:

@@ -25,6 +25,9 @@ type VFS struct {
 	clock   func() time.Time
 }
 
+// timezoneContextKey 在单次运行内传递时区，date 指令据此返回本地日期时间。
+type timezoneContextKey struct{}
+
 // NewVFS 创建无会话状态的共享读取器。
 func NewVFS(library Library) *VFS { return &VFS{library: library, clock: time.Now} }
 
@@ -49,8 +52,8 @@ func (vfs *VFS) Execute(ctx context.Context, command string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if parts[0][0] == "head" {
-		return "", fmt.Errorf("head 不能作为管道左侧命令")
+	if parts[0][0] == "head" || parts[0][0] == "date" {
+		return "", fmt.Errorf("该命令不能作为管道左侧命令")
 	}
 	output, err := vfs.executeCommand(ctx, parts[0])
 	if err != nil {
@@ -68,9 +71,27 @@ func (vfs *VFS) executeCommand(ctx context.Context, args []string) (string, erro
 		return vfs.read(ctx, args)
 	case "head":
 		return vfs.head(ctx, args)
+	case "date":
+		return vfs.date(ctx, args)
 	default:
-		return "", fmt.Errorf("仅支持 ls、find、grep、cat、head")
+		return "", fmt.Errorf("仅支持 ls、find、grep、cat、head、date")
 	}
+}
+
+// date 返回配置时区的当前日期时间，帮助模型确定当下日期。
+func (vfs *VFS) date(ctx context.Context, args []string) (string, error) {
+	if len(args) != 1 {
+		return "", fmt.Errorf("date 不接受参数")
+	}
+	timezone, _ := ctx.Value(timezoneContextKey{}).(string)
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return "", fmt.Errorf("时区无效: %w", err)
+	}
+	return vfs.clock().In(location).Format(time.RFC3339), nil
 }
 
 // listing 返回有界元数据与规范路径，类别目录不改变文件身份。

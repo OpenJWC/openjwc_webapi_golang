@@ -128,6 +128,16 @@ var menus = []menuSpec{
 			"x": {action: admin.ActionCrawlCancel, title: "取消当前爬虫任务", target: true},
 		}},
 
+	{title: "爬虫配置", action: admin.ActionCrawlerConfig, hint: "e 编辑启停与间隔",
+		actions: map[string]actionSpec{
+			"e": {action: admin.ActionSetCrawlerConfig, title: "配置单个爬虫", target: true,
+				fields: []field{
+					{key: "enabled", label: "启用 true / false", value: "true"},
+					{key: "interval_minutes", label: "自动间隔分钟 5～10080", value: "480"},
+				},
+			},
+		}},
+
 	{
 		title: "运行日志", action: admin.ActionLogs,
 		hint:    "最近 200 条安全摘要；完整结构化日志发送到 stderr",

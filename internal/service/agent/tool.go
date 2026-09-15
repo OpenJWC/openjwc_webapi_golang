@@ -36,7 +36,7 @@ func toolCommand(call toolCall) (string, error) {
 	}
 	for index, part := range parts {
 		switch part[0] {
-		case "ls", "find", "grep", "cat", "head":
+		case "ls", "find", "grep", "cat", "head", "date":
 		default:
 			return "", fmt.Errorf("%w: 只允许受限资讯读取工具", errUnsupportedCommand)
 		}
@@ -44,8 +44,8 @@ func toolCommand(call toolCall) (string, error) {
 			return "", fmt.Errorf("%w: 管道末端只能使用 head", errInvalidCommand)
 		}
 	}
-	if len(parts) == 2 && parts[0][0] == "head" {
-		return "", fmt.Errorf("%w: head 不能作为管道左侧命令", errInvalidCommand)
+	if len(parts) == 2 && (parts[0][0] == "head" || parts[0][0] == "date") {
+		return "", fmt.Errorf("%w: 该命令不能作为管道左侧命令", errInvalidCommand)
 	}
 	return args.Command, nil
 }

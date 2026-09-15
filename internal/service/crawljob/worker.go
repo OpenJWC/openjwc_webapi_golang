@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
-// ticket 关联单个任务身份与独立的完成通知。
+// ticket 关联单个任务身份、名称选择与独立的完成通知。
 type ticket struct {
-	id   string
-	done chan result
+	id        string
+	selection []string
+	done      chan result
 }
 
 // result 只传给该任务的等待者，不读取可能已经切换的全局状态。
@@ -53,7 +54,7 @@ func (manager *Manager) execute(parent context.Context, job ticket) {
 		cancel()
 	}
 	manager.mutex.Unlock()
-	count, err := manager.runner.RunObserved(ctx, manager.store.SaveSource)
+	count, err := manager.runner.RunObserved(ctx, job.selection, manager.store.SaveSource)
 	if err == nil {
 		err = manager.store.MarkJobSuccess(ctx, "crawler")
 	}

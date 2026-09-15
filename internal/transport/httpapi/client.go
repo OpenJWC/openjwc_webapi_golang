@@ -64,6 +64,7 @@ func NewClientRouter(logger *slog.Logger, dependencies ClientDependencies) http.
 	mux.HandleFunc("POST /api/v1/client/chat", client.withIdentity(access.Chat, client.chat))
 	mux.HandleFunc("POST /api/v1/client/submissions", client.withIdentity(access.Submit, client.submit))
 	mux.HandleFunc("GET /api/v1/client/submissions/my", client.withIdentity("", client.mySubmissions))
+	mux.HandleFunc("GET /api/v2/client/daily-reports/today", client.withIdentity(access.Browse, client.dailyReportToday))
 	mux.HandleFunc("GET /api/v2/client/daily-reports/{date}", client.withIdentity(access.Browse, client.dailyReport))
 	mux.HandleFunc("GET /api/v1/client/device", client.keyDevices)
 	mux.HandleFunc("POST /api/v1/client/device/unbind", client.keyUnbind)

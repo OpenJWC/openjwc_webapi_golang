@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/domain/notice"
+	"github.com/OpenJWC/openjwc_webapi_golang/internal/domain/report"
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/infrastructure/sqlite"
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/service/admin"
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/service/agent"
@@ -114,5 +115,24 @@ func TestLegacySSEPreservesRawTextFrames(t *testing.T) {
 	response := callClient(router, "POST", "/api/v1/client/chat", `{"user_query":"问题","stream":true}`, token)
 	if response.Code != 200 || response.Body.String() != "data: 第一行\n第二行\n\ndata: [DONE]\n\n" {
 		t.Fatalf("SSE 响应不符: %d %q", response.Code, response.Body.String())
+	}
+}
+
+// TestDailyReportTodayReturnsLatestPublished 验证今日接口由服务器解析最近一份已完成日报。
+func TestDailyReportTodayReturnsLatestPublished(t *testing.T) {
+	router, store, token := testClient(t)
+	if err := store.SaveDaily(context.Background(), "2000-01-01", report.Completed, "历史日报正文", 1); err != nil {
+		t.Fatal(err)
+	}
+	response := callClient(router, "GET", "/api/v2/client/daily-reports/today", "", token)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "2000-01-01") || !strings.Contains(response.Body.String(), "历史日报正文") {
+		t.Fatalf("今日接口响应错误: %d %s", response.Code, response.Body)
+	}
+	response = callClient(router, "GET", "/api/v2/client/daily-reports/2000-01-01", "", token)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "历史日报正文") {
+		t.Fatalf("按日期接口响应错误: %d %s", response.Code, response.Body)
+	}
+	if response = callClient(router, "GET", "/api/v2/client/daily-reports/2999-01-01", "", token); response.Code != 404 {
+		t.Fatalf("未发布日期应返回 404: %d", response.Code)
 	}
 }

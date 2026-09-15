@@ -73,6 +73,26 @@ func TestVFSFindAndPipelineStayInsideVirtualViews(t *testing.T) {
 	}
 }
 
+// TestVFSDateUsesConfiguredTimezone 验证 date 指令返回配置时区时间，无时区时回退 UTC。
+func TestVFSDateUsesConfiguredTimezone(t *testing.T) {
+	vfs := NewVFS(agentLibrary(t))
+	vfs.clock = func() time.Time { return time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC) }
+	ctx := context.WithValue(context.Background(), timezoneContextKey{}, "Asia/Shanghai")
+	text, err := vfs.Execute(ctx, "date")
+	if err != nil || !strings.Contains(text, "2026-09-15T08:00:00+08:00") {
+		t.Fatalf("date 未使用配置时区: %q %v", text, err)
+	}
+	text, err = vfs.Execute(context.Background(), "date")
+	if err != nil || !strings.Contains(text, "2026-09-15T00:00:00Z") {
+		t.Fatalf("date 无时区未回退 UTC: %q %v", text, err)
+	}
+	for _, command := range []string{"date extra", "date | head -n 1", "head -n 1 | date"} {
+		if _, err = vfs.Execute(ctx, command); err == nil {
+			t.Errorf("date 非法形式被接受: %s", command)
+		}
+	}
+}
+
 // TestVFSCanContinueLongUnicodeContent 验证长正文尾部可以续读且不会拆坏字符。
 func TestVFSCanContinueLongUnicodeContent(t *testing.T) {
 	store := agentLibrary(t)

@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/config"
+	"github.com/OpenJWC/openjwc_webapi_golang/internal/domain/crawl"
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/infrastructure/sqlite"
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/observability"
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/service/admin"
@@ -43,11 +46,18 @@ func Run(parent context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	spider := crawler.New(store, store)
-	crawlRunners := []crawler.ObservedRunner{spider}
-	for _, program := range cfg.CrawlerPrograms {
-		crawlRunners = append(crawlRunners, crawler.NewExternal(crawler.Program{Name: program.Name, Path: program.Path, Args: program.Args}, store, store))
+	runners := []crawler.NamedRunner{
+		crawler.NewSiteRunner(spider, "jwc"),
+		crawler.NewSiteRunner(spider, "cs"),
+		crawler.NewSiteRunner(spider, "xsxy"),
 	}
-	crawlTasks := crawljob.New(crawler.NewGroup(crawlRunners...), store)
+	for _, program := range cfg.CrawlerPrograms {
+		runners = append(runners, crawler.NewExternal(crawler.Program{Name: program.Name, Path: program.Path, Args: program.Args}, store, store))
+	}
+	if err = seedCrawlerConfigs(ctx, store, cfg); err != nil {
+		return err
+	}
+	crawlTasks := crawljob.New(crawler.NewGroup(runners...), store, enabledCrawlers(store))
 	daily := digest.New(store, store, chat)
 	scheduler := schedule.New(store, store, crawlTasks, daily, logger)
 	publicListener, err := net.Listen("tcp", cfg.Server.Address)
@@ -119,5 +129,46 @@ func newServer(ctx context.Context, handler http.Handler) *http.Server {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 		BaseContext:       func(listener net.Listener) context.Context { return ctx },
+	}
+}
+
+// seedCrawlerConfigs 为首启动补齐内置与外部爬虫的默认配置，不覆盖已有编辑。
+func seedCrawlerConfigs(ctx context.Context, store *sqlite.Store, cfg config.Config) error {
+	values, err := store.Settings(ctx)
+	if err != nil {
+		return fmt.Errorf("读取爬虫配置种子: %w", err)
+	}
+	interval := crawl.DefaultIntervalMinutes
+	if minutes, parseErr := strconv.Atoi(values["crawler_interval_minutes"]); parseErr == nil {
+		interval = minutes
+	}
+	chosen := make(map[string]bool)
+	for _, name := range strings.Split(values["crawler_sites"], ",") {
+		chosen[strings.TrimSpace(name)] = true
+	}
+	specs := make([]crawl.Config, 0, 3+len(cfg.CrawlerPrograms))
+	for _, name := range []string{"jwc", "cs", "xsxy"} {
+		specs = append(specs, crawl.Config{Name: name, Enabled: chosen[name], IntervalMinutes: interval})
+	}
+	for _, program := range cfg.CrawlerPrograms {
+		specs = append(specs, crawl.Config{Name: program.Name, Enabled: true, IntervalMinutes: interval})
+	}
+	return store.SeedCrawlerConfigs(ctx, specs)
+}
+
+// enabledCrawlers 返回用于手动任务的全部启用爬虫名称。
+func enabledCrawlers(store *sqlite.Store) func(context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		configs, err := store.CrawlerConfigs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(configs))
+		for _, config := range configs {
+			if config.Enabled {
+				names = append(names, config.Name)
+			}
+		}
+		return names, nil
 	}
 }

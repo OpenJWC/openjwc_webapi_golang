@@ -63,6 +63,16 @@ func newForm(spec actionSpec, row []string) *form {
 			}
 		}
 	}
+	if spec.action == admin.ActionSetCrawlerConfig && len(row) >= 3 {
+		for index := range result.fields {
+			switch result.fields[index].key {
+			case "enabled":
+				result.fields[index].value = row[1]
+			case "interval_minutes":
+				result.fields[index].value = row[2]
+			}
+		}
+	}
 	result.fields = append(result.fields, field{key: "confirm", label: "输入 yes 确认执行"})
 	return result
 }

@@ -54,6 +54,9 @@ func NewExternal(program Program, settings setting.Reader, repository Repository
 	return &External{program: program, settings: settings, repository: repository}
 }
 
+// Name 返回部署配置中的爬虫名称，供具名调度选择。
+func (external *External) Name() string { return external.program.Name }
+
 // RunObserved 启动一次进程，持续校验进度和资讯，最终状态通过同一观察端口持久化。
 func (external *External) RunObserved(ctx context.Context, observe Observer) (int, error) {
 	if !external.program.Valid() {

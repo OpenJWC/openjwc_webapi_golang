@@ -78,6 +78,7 @@ func (loop *Loop) run(parent context.Context, request Request, writer *eventWrit
 	}
 	ctx, cancel := context.WithTimeout(parent, budget.RunTimeout)
 	defer cancel()
+	ctx = context.WithValue(ctx, timezoneContextKey{}, values["timezone"])
 	if values["llm_api_key"] == "" {
 		return usage, ErrUnavailable
 	}
@@ -181,6 +182,7 @@ const toolInstructions = `
 你可以反复调用 bash 工具查阅资讯，但这不是宿主机 Bash。
 先 ls / 查看目录说明；默认可 ls /recent 优先近期，或按 /by-label 和 /by-date 查询。
 ls/find/grep 支持日期范围与排序；find <目录> 可选 -type f；cat 读取文件；head 支持 -n 行数。
+date 返回当前日期时间，需要明确“今天/昨天”等自然日时优先使用。
 允许一个受限 VFS 管道，且右侧只能是 head，例如 grep '考试' /notices | head -n 10。
 未命中时扩大日期范围、拆分关键词或使用同义词，不将零结果当作不存在。用户明确历史日期时优先遵循。
 发布时间、抓取时间不等于业务截止时间，引用截止时间必须读取正文。

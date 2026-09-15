@@ -20,7 +20,7 @@ type controlledRunner struct {
 }
 
 // RunObserved 等待显式取消并报告该来源的取消状态。
-func (runner controlledRunner) RunObserved(ctx context.Context, observe crawler.Observer) (int, error) {
+func (runner controlledRunner) RunObserved(ctx context.Context, names []string, observe crawler.Observer) (int, error) {
 	source := crawl.Source{Name: "jwc", State: crawl.Running, StartedAt: time.Now().UTC()}
 	if err := observe(ctx, source); err != nil {
 		return 0, err
@@ -51,7 +51,7 @@ func TestManualJobSurvivesCallerCancellationAndStopsExplicitly(t *testing.T) {
 	}
 	defer store.Close()
 	runner := controlledRunner{started: make(chan struct{}), check: make(chan struct{}), observed: make(chan error, 1)}
-	manager := New(runner, store)
+	manager := New(runner, store, nil)
 	owner, stop := context.WithCancel(context.Background())
 	finished := make(chan struct{})
 	go func() { manager.Serve(owner); close(finished) }()
@@ -81,8 +81,8 @@ func TestManualJobSurvivesCallerCancellationAndStopsExplicitly(t *testing.T) {
 
 // TestQueuedJobCanBeCanceledBeforeWorkerStarts 验证尚未执行的任务也能被显式取消。
 func TestQueuedJobCanBeCanceledBeforeWorkerStarts(t *testing.T) {
-	manager := New(canceledRunner{}, discardStore{})
-	job, err := manager.enqueue(context.Background())
+	manager := New(canceledRunner{}, discardStore{}, nil)
+	job, err := manager.enqueue(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestQueuedJobCanBeCanceledBeforeWorkerStarts(t *testing.T) {
 type canceledRunner struct{}
 
 // RunObserved 返回传入的取消状态。
-func (canceledRunner) RunObserved(ctx context.Context, observe crawler.Observer) (int, error) {
+func (canceledRunner) RunObserved(ctx context.Context, names []string, observe crawler.Observer) (int, error) {
 	return 0, ctx.Err()
 }
 

@@ -3,20 +3,20 @@ package schedule
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"time"
 
+	"github.com/OpenJWC/openjwc_webapi_golang/internal/domain/crawl"
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/service/setting"
 )
 
-// Jobs 定义持久化调度进度的存储能力。
-type Jobs interface {
-	JobSuccess(context.Context, string) (time.Time, error)
+// Configs 提供每个爬虫的启停、间隔与最近成功时间。
+type Configs interface {
+	CrawlerConfigs(context.Context) ([]crawl.Config, error)
 }
 
-// Crawler 定义有界可取消的爬虫入口。
+// Crawler 定义按名称选择运行的有界可取消爬虫入口。
 type Crawler interface {
-	Run(context.Context) (int, error)
+	Run(context.Context, []string) (int, error)
 }
 
 // Digest 定义可重试且幂等的日报生成入口。
@@ -27,7 +27,7 @@ type Digest interface {
 // Scheduler 的运行状态由单个后台循环独占。
 type Scheduler struct {
 	settings         setting.Reader
-	jobs             Jobs
+	configs          Configs
 	crawler          Crawler
 	digest           Digest
 	logger           *slog.Logger
@@ -36,8 +36,8 @@ type Scheduler struct {
 }
 
 // New 组装调度依赖，不在构造函数中启动 goroutine。
-func New(settings setting.Reader, jobs Jobs, crawler Crawler, digest Digest, logger *slog.Logger) *Scheduler {
-	return &Scheduler{settings: settings, jobs: jobs, crawler: crawler, digest: digest, logger: logger}
+func New(settings setting.Reader, configs Configs, crawler Crawler, digest Digest, logger *slog.Logger) *Scheduler {
+	return &Scheduler{settings: settings, configs: configs, crawler: crawler, digest: digest, logger: logger}
 }
 
 // Run 按分钟检查计划，取消后结束且不遗留后台任务。
@@ -54,7 +54,7 @@ func (scheduler *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// tick 根据持久化成功时间及本轮冷却时间调度，不对失败任务忙循环重试。
+// tick 按每爬虫间隔调度，日报按本地前一日生成，失败不忙循环重试。
 func (scheduler *Scheduler) tick(ctx context.Context, current time.Time) {
 	values, err := scheduler.settings.Settings(ctx)
 	if err != nil {
@@ -62,14 +62,11 @@ func (scheduler *Scheduler) tick(ctx context.Context, current time.Time) {
 		return
 	}
 	if values["crawler_enabled"] == "true" && current.Sub(scheduler.lastCrawlAttempt) >= 5*time.Minute {
-		lastSuccess, err := scheduler.jobs.JobSuccess(ctx, "crawler")
-		minutes, _ := strconv.Atoi(values["crawler_interval_minutes"])
-		if err != nil {
-			scheduler.logger.Error("读取爬虫最近成功时间失败", "error", err)
-		} else if current.Sub(lastSuccess) >= time.Duration(minutes)*time.Minute {
+		due := scheduler.dueCrawlers(ctx, current)
+		if len(due) > 0 {
 			scheduler.lastCrawlAttempt = current
 			job, cancel := context.WithTimeout(ctx, 10*time.Minute)
-			count, err := scheduler.crawler.Run(job)
+			count, err := scheduler.crawler.Run(job, due)
 			cancel()
 			if err != nil {
 				scheduler.logger.Error("爬虫计划执行失败", "imported", count, "error", err)
@@ -97,4 +94,24 @@ func (scheduler *Scheduler) tick(ctx context.Context, current time.Time) {
 	if err := scheduler.digest.Generate(job, day.Format("2006-01-02")); err != nil {
 		scheduler.logger.Error("日报计划执行失败", "date", day.Format("2006-01-02"), "error", err)
 	}
+}
+
+// dueCrawlers 返回启用且距上次成功达到间隔的爬虫名称。
+func (scheduler *Scheduler) dueCrawlers(ctx context.Context, current time.Time) []string {
+	configs, err := scheduler.configs.CrawlerConfigs(ctx)
+	if err != nil {
+		scheduler.logger.Error("读取爬虫配置失败", "error", err)
+		return nil
+	}
+	due := make([]string, 0, len(configs))
+	for _, config := range configs {
+		if !config.Enabled {
+			continue
+		}
+		interval := time.Duration(config.IntervalMinutes) * time.Minute
+		if current.Sub(config.LastSuccess) >= interval {
+			due = append(due, config.Name)
+		}
+	}
+	return due
 }

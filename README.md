@@ -52,7 +52,7 @@ curl http://127.0.0.1:8080/healthz
 - 单行输入 Enter 完成编辑，多行输入 Enter 换行、`Ctrl+s` 完成编辑，`Ctrl+u` 清空。
 - 最后一个确认字段通过 `i` 输入 `yes`，Esc 回普通模式后 Enter 提交。危险动作不因普通导航误触发。
 - 日报生成改为 `S`，避免与 `gg` 冲突；其他业务键以当前页面帮助为准。
-- 首页「服务管理」可操作用户级部署；「爬虫任务」可查询后台进度并显式取消，关闭 TUI 不取消已接纳的爬虫任务。
+- 首页「服务管理」可操作用户级部署；「爬虫任务」可查询后台进度并显式取消，关闭 TUI 不取消已接纳的爬虫任务。「爬虫配置」页可逐个启用/停用内置站点与外部程序，并设置各自的自动抓取间隔。
 - `q` 退出界面；`Ctrl+c` 退出并取消尚未完成的前台管理请求。退出后显示简洁摘要，不回显密钥。
 
 ### 首次配置
@@ -119,6 +119,7 @@ bin/openjwc licenses
 - [服务安装、启停与卸载](docs/service.md)
 - [Chat 事件、客户端示例、VFS 与本地测试](docs/chat-events.md)
 - [Android Kotlin Agent Chat 接入指南](docs/android-agent-chat.md)
+- [日报接口](docs/daily-reports.md)
 - [外部爬虫 NDJSON v1 协议](docs/crawler-protocol.md)
 - [架构](docs/architecture.md)
 - [迁移与兼容差异](docs/migration.md)

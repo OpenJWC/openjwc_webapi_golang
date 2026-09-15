@@ -408,6 +408,28 @@ paths:
                       content: {type: string}
         '404': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
+  /api/v2/client/daily-reports/today:
+    get:
+      operationId: getTodayDailyReport
+      description: 需要浏览资讯权限；由服务器按本地时区返回最近一份日期不超过今天的已完成日报。
+      responses:
+        '200':
+          description: 最近一份已发布日报正文
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msg, data]
+                properties:
+                  msg: {type: string, const: 获取成功}
+                  data:
+                    type: object
+                    required: [date, content]
+                    properties:
+                      date: {type: string, format: date}
+                      content: {type: string}
+        '404': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
     Bearer:

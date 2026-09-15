@@ -10,9 +10,9 @@ import (
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/service/crawler"
 )
 
-// Runner 提供单次抓取及值快照观察能力。
+// Runner 提供按名称选择及值快照观察的单次抓取能力。
 type Runner interface {
-	RunObserved(context.Context, crawler.Observer) (int, error)
+	RunObserved(context.Context, []string, crawler.Observer) (int, error)
 }
 
 // Store 保存进度和全任务成功时间。
@@ -26,6 +26,7 @@ type Store interface {
 type Manager struct {
 	runner        Runner
 	store         Store
+	enabled       func(context.Context) ([]string, error)
 	mutex         sync.Mutex
 	queue         chan ticket
 	id            string
@@ -38,12 +39,12 @@ type Manager struct {
 }
 
 // New 创建尚未启动协程的任务管理器，Serve 由应用生命周期拥有。
-func New(runner Runner, store Store) *Manager {
-	return &Manager{runner: runner, store: store, queue: make(chan ticket, 1), state: "idle"}
+func New(runner Runner, store Store, enabled func(context.Context) ([]string, error)) *Manager {
+	return &Manager{runner: runner, store: store, enabled: enabled, queue: make(chan ticket, 1), state: "idle"}
 }
 
 // enqueue 原子接纳唯一任务，调用者上下文不成为任务的父上下文。
-func (manager *Manager) enqueue(ctx context.Context) (ticket, error) {
+func (manager *Manager) enqueue(ctx context.Context, names []string) (ticket, error) {
 	if err := ctx.Err(); err != nil {
 		return ticket{}, err
 	}
@@ -55,7 +56,7 @@ func (manager *Manager) enqueue(ctx context.Context) (ticket, error) {
 	if manager.active {
 		return ticket{}, fmt.Errorf("爬虫任务已在运行")
 	}
-	job := ticket{id: fmt.Sprintf("%d", time.Now().UnixNano()), done: make(chan result, 1)}
+	job := ticket{id: fmt.Sprintf("%d", time.Now().UnixNano()), selection: names, done: make(chan result, 1)}
 	manager.id = job.id
 	manager.state = "queued"
 	manager.detail = ""
@@ -65,15 +66,19 @@ func (manager *Manager) enqueue(ctx context.Context) (ticket, error) {
 	return job, nil
 }
 
-// Start 接纳手动任务后立即返回，关闭 TUI 不会取消该任务。
+// Start 接纳手动任务，运行所有启用爬虫；关闭 TUI 不会取消该任务。
 func (manager *Manager) Start(ctx context.Context) (string, error) {
-	job, err := manager.enqueue(ctx)
+	names, err := manager.enabledNames(ctx)
+	if err != nil {
+		return "", err
+	}
+	job, err := manager.enqueue(ctx, names)
 	return job.id, err
 }
 
-// Run 为调度器提供同步等待入口，超时仅取消自己发起的任务。
-func (manager *Manager) Run(ctx context.Context) (int, error) {
-	job, err := manager.enqueue(ctx)
+// Run 为调度器提供按名称选择的同步等待入口，超时仅取消自己发起的任务。
+func (manager *Manager) Run(ctx context.Context, names []string) (int, error) {
+	job, err := manager.enqueue(ctx, names)
 	if err != nil {
 		return 0, err
 	}
@@ -84,6 +89,14 @@ func (manager *Manager) Run(ctx context.Context) (int, error) {
 		_ = manager.Cancel(context.Background(), job.id)
 		return 0, ctx.Err()
 	}
+}
+
+// enabledNames 返回所有启用爬虫名称，无配置来源时运行全部。
+func (manager *Manager) enabledNames(ctx context.Context) ([]string, error) {
+	if manager.enabled == nil {
+		return nil, nil
+	}
+	return manager.enabled(ctx)
 }
 
 // Cancel 校验任务身份后取消当前任务，不会误伤后来创建的任务。
