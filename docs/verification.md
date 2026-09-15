@@ -2,7 +2,7 @@
 
 ## 已执行
 
-- `make check`：gofmt、`go vet ./...`、`go test ./...`。
+- `make check`：`gofmt -l` 只读格式检查、`go vet ./...`、`go test ./...`。
 - `make race`：`go test -race ./...`。
 - `make build`：`CGO_ENABLED=0` 构建；`file bin/openjwc` 确认为 Linux amd64 静态链接 ELF。
 - OpenAPI YAML 语法解析通过，18 个公开路径与处理器注册覆盖测试通过。

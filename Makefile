@@ -1,7 +1,11 @@
-.PHONY: fmt vet test race check run build licenses bench
+.PHONY: fmt fmt-check vet test race check run build licenses bench
 
 fmt:
-	gofmt -w $$(find cmd internal migrations tools -name '*.go' -type f)
+	gofmt -w .
+
+fmt-check:
+	@files="$$(gofmt -l .)"; \
+	if [ -n "$$files" ]; then echo "以下文件未格式化，请先运行 make fmt："; echo "$$files"; exit 1; fi
 
 vet:
 	go vet ./...
@@ -12,7 +16,7 @@ test:
 race:
 	go test -race ./...
 
-check: fmt vet test
+check: fmt-check vet test
 
 licenses:
 	go run ./tools/licenses

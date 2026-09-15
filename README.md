@@ -107,7 +107,8 @@ openjwc service uninstall  # 停止并取消部署，保留数据库/备份/配�
 ## 开发与验证
 
 ```bash
-make check
+make fmt      # 写入格式化
+make check    # 只读门禁：格式检查、go vet、go test
 make race
 make bench
 make build

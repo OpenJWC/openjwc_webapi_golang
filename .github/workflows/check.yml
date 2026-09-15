@@ -1,0 +1,70 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 格式 · 静态检查 · 单元测试
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # make check 使用 gofmt -l 只读检查，不会改写工作区
+      - run: make check
+
+  race:
+    name: 竞态检测
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make race
+
+  build:
+    name: 构建 · 生成物一致性
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # build 依赖 licenses，会重新生成 internal/license/third_party.txt
+      - name: 构建静态二进制
+        run: make build
+
+      - name: 确认产物为静态链接 ELF
+        run: |
+          set -eu
+          file bin/openjwc
+          file bin/openjwc | grep -q "ELF 64-bit LSB executable"
+          file bin/openjwc | grep -q "statically linked"
+
+      - name: 确认 licenses 生成物与提交内容一致
+        run: git diff --exit-code -- internal/license/third_party.txt
+
+      - name: 交叉编译 linux/arm64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/openjwc-arm64 ./cmd/openjwc
+
+  # 目标平台只有 Linux，所以这里不做 darwin/windows 交叉编译。
+  # 若要支持非 Linux 构建（需要先给 syscall 使用处加 //go:build linux 与 stub），
+  # 必须在这里补 GOOS=darwin / GOOS=windows 的 go build ./... 矩阵，
+  # 否则平台 stub 永远不会被执行，会腐烂成"能编译但没人测"的假支持。
