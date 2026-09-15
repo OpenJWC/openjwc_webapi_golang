@@ -7,14 +7,32 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/OpenJWC/openjwc_webapi_golang/internal/service/setting"
 )
 
-// complete 执行工具可用的有界模型请求，不发布中间模型正文。
+// complete 执行工具可用的有界模型请求，瞬时失败可重试一次。
 func (loop *Loop) complete(ctx context.Context, values map[string]string, messages []modelMessage, budget setting.AgentBudget) (modelMessage, error) {
-	ctx, cancel := context.WithTimeout(ctx, budget.ModelTimeout)
+	message, err := loop.modelRound(ctx, values, messages, budget)
+	if err == nil {
+		return message, nil
+	}
+	if retryErr := retryModelOnce(ctx, budget, err, false, func() error {
+		var attemptErr error
+		message, attemptErr = loop.modelRound(ctx, values, messages, budget)
+		return attemptErr
+	}); retryErr != nil {
+		return modelMessage{}, retryErr
+	}
+	return message, nil
+}
+
+// modelRound 完成一次工具轮模型请求，不发布中间正文。
+func (loop *Loop) modelRound(parent context.Context, values map[string]string, messages []modelMessage, budget setting.AgentBudget) (modelMessage, error) {
+	ctx, cancel := context.WithTimeout(parent, budget.ModelTimeout)
 	defer cancel()
 	response, err := loop.requestModel(ctx, values, messages, nil)
 	if err != nil {
@@ -30,18 +48,39 @@ func (loop *Loop) complete(ctx context.Context, values map[string]string, messag
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
 	if err != nil || len(content) > 2<<20 {
-		return modelMessage{}, ErrUnavailable
+		return modelMessage{}, &modelError{Kind: "body_read", Retry: true, Base: ErrUnavailable}
 	}
 	var result modelResponse
 	if err = json.Unmarshal(content, &result); err != nil || len(result.Choices) != 1 {
-		return modelMessage{}, fmt.Errorf("%w: 非流式模型响应无效", errModelProtocol)
+		return modelMessage{}, &modelError{Kind: "response_invalid", Base: errModelProtocol}
 	}
 	return result.Choices[0].Message, nil
 }
 
-// finalize 执行一次明确禁用工具的最终回答请求，只有 SSE 内容才即时发布。
+// finalize 执行一次禁用工具的最终回答，尚未输出任何文字前允许一次重试。
 func (loop *Loop) finalize(ctx context.Context, values map[string]string, messages []modelMessage, budget setting.AgentBudget, emit func(string) error) (string, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, budget.ModelTimeout)
+	emitted := false
+	publish := func(text string) error {
+		emitted = true
+		return emit(text)
+	}
+	buffered, streamed, err := loop.finalRound(ctx, values, messages, budget, publish)
+	if err == nil {
+		return buffered, streamed, nil
+	}
+	if retryErr := retryModelOnce(ctx, budget, err, emitted, func() error {
+		var attemptErr error
+		buffered, streamed, attemptErr = loop.finalRound(ctx, values, messages, budget, publish)
+		return attemptErr
+	}); retryErr != nil {
+		return "", false, retryErr
+	}
+	return buffered, streamed, nil
+}
+
+// finalRound 完成一次收束请求，只有 SSE 内容才即时发布。
+func (loop *Loop) finalRound(parent context.Context, values map[string]string, messages []modelMessage, budget setting.AgentBudget, emit func(string) error) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(parent, budget.ModelTimeout)
 	defer cancel()
 	choice := "none"
 	response, err := loop.requestModel(ctx, values, messages, &choice)
@@ -57,16 +96,16 @@ func (loop *Loop) finalize(ctx context.Context, values map[string]string, messag
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
 	if err != nil || len(content) > 2<<20 {
-		return "", false, ErrUnavailable
+		return "", false, &modelError{Kind: "body_read", Retry: true, Base: ErrUnavailable}
 	}
 	var result modelResponse
 	if err = json.Unmarshal(content, &result); err != nil || len(result.Choices) != 1 || len(result.Choices[0].Message.Calls) != 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
-		return "", false, fmt.Errorf("%w: 最终模型响应无效", errModelProtocol)
+		return "", false, &modelError{Kind: "final_response_invalid", Base: errModelProtocol}
 	}
 	return result.Choices[0].Message.Content, false, nil
 }
 
-// requestModel 创建带单次超时的 OpenAI 兼容请求，拒绝响应内容和凭据进入错误。
+// requestModel 创建 OpenAI 兼容请求并返回分类后的脱敏失败。
 func (loop *Loop) requestModel(ctx context.Context, values map[string]string, messages []modelMessage, choice *string) (*http.Response, error) {
 	payload, err := json.Marshal(modelRequest{Model: values["llm_model"], Messages: messages, Tools: json.RawMessage(toolSchema), ToolChoice: choice, MaxTokens: 4096, Stream: true})
 	if err != nil {
@@ -74,7 +113,7 @@ func (loop *Loop) requestModel(ctx context.Context, values map[string]string, me
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(values["llm_base_url"], "/")+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return nil, ErrUnavailable
+		return nil, &modelError{Kind: "request_build", Base: errModelProtocol}
 	}
 	request.Header.Set("Authorization", "Bearer "+values["llm_api_key"])
 	request.Header.Set("Content-Type", "application/json")
@@ -83,13 +122,22 @@ func (loop *Loop) requestModel(ctx context.Context, values map[string]string, me
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, ErrUnavailable
+		return nil, &modelError{Kind: "network", Retry: true, Base: ErrUnavailable}
 	}
 	if response.StatusCode != http.StatusOK {
-		response.Body.Close()
-		return nil, ErrUnavailable
+		defer response.Body.Close()
+		return nil, &modelError{Kind: fmt.Sprintf("upstream_%d", response.StatusCode), Status: response.StatusCode, Wait: retryAfter(response), Retry: response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500, Base: ErrUnavailable}
 	}
 	return response, nil
+}
+
+// retryAfter 解析有界的 Retry-After 秒数，不信任过大或非法提示。
+func retryAfter(response *http.Response) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(response.Header.Get("Retry-After")))
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // toolSchema 固定模型可见工具的 JSON Schema。

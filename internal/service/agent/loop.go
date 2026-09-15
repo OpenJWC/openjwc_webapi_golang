@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -103,6 +104,9 @@ func (loop *Loop) run(parent context.Context, request Request, writer *eventWrit
 		usage.modelRounds++
 		message, err := loop.complete(ctx, values, messages, budget)
 		if err != nil {
+			if errors.Is(err, errFinishLength) {
+				return loop.finalizeBudget(ctx, values, messages, writer, budget, usage, finalizeAnswerCut)
+			}
 			return usage, err
 		}
 		if len(message.Content) > maxModelContentBytes || len(message.Calls) > budget.MaxToolsPerRound {
@@ -111,7 +115,7 @@ func (loop *Loop) run(parent context.Context, request Request, writer *eventWrit
 		message.Role, message.CallID = "assistant", ""
 		if len(message.Calls) == 0 {
 			if strings.TrimSpace(message.Content) == "" {
-				return usage, ErrUnavailable
+				return usage, &modelError{Kind: "empty_content", Base: ErrUnavailable}
 			}
 			return usage, writer.send(ctx, Event{Type: AnswerDelta, Text: message.Content, Delivery: "buffered-final"})
 		}
@@ -139,7 +143,7 @@ func (loop *Loop) run(parent context.Context, request Request, writer *eventWrit
 
 // finalizeBudget 请求一次禁用工具的收束回答，绝不恢复工具执行。
 func (loop *Loop) finalizeBudget(ctx context.Context, values map[string]string, messages []modelMessage, writer *eventWriter, budget setting.AgentBudget, usage runUsage, reason finalizationReason) (runUsage, error) {
-	messages = append(messages, modelMessage{Role: "user", Content: "检索已因资源预算停止（" + string(reason) + "）。不得调用工具；仅依据已有资讯证据给出简洁结论、已知限制和可行的下一步。"})
+	messages = append(messages, modelMessage{Role: "user", Content: "检索或回答生成已因资源限制停止（" + string(reason) + "）。不得调用工具；仅依据已有资讯证据给出简洁结论、已知限制和可行的下一步。"})
 	buffered, streamed, err := loop.finalize(ctx, values, messages, budget, func(text string) error {
 		return writer.send(ctx, Event{Type: AnswerDelta, Text: text, Delivery: "streaming-final"})
 	})

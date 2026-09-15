@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // FailureCode 是不含请求内容与供应商细节的稳定运行失败分类。
@@ -21,10 +22,27 @@ const (
 	ToolReadFailed       FailureCode = "tool_read_failed"
 )
 
+// modelError 保存一次模型调用的脱敏失败细节，Kind 与状态码不包含响应内容。
+type modelError struct {
+	Kind   string
+	Status int
+	Wait   time.Duration
+	Retry  bool
+	Base   error
+}
+
+// Error 返回固定细节标识，仅供日志与排障使用。
+func (err *modelError) Error() string { return err.Kind }
+
+// Unwrap 暴露稳定错误链，使公开失败分类可以继续使用哨兵判断。
+func (err *modelError) Unwrap() error { return err.Base }
+
 // Failure 保存可公开和可记录的脱敏运行状态。
 type Failure struct {
 	RunID           string
 	Code            FailureCode
+	Detail          string
+	UpstreamStatus  int
 	ModelRounds     int
 	ToolCalls       int
 	ToolResultBytes int
@@ -37,22 +55,27 @@ func (failure *Failure) Error() string { return string(failure.Code) }
 // Unwrap 保留内部错误链，仅供进程内部分类使用。
 func (failure *Failure) Unwrap() error { return failure.Cause }
 
-// classifyFailure 将内部错误映射为稳定且不泄露细节的公开码。
+// classifyFailure 将内部错误映射为稳定且不泄露细节的公开码与日志细节。
 func classifyFailure(err error, usage runUsage) *Failure {
-	code := FailureInternal
+	failure := &Failure{Code: FailureInternal, ModelRounds: usage.modelRounds, ToolCalls: usage.toolCalls, ToolResultBytes: usage.toolResultBytes, Cause: err}
+	var model *modelError
+	if errors.As(err, &model) {
+		failure.Detail = model.Kind
+		failure.UpstreamStatus = model.Status
+	}
 	switch {
 	case errors.Is(err, ErrBusy):
-		code = FailureBusy
+		failure.Code = FailureBusy
 	case errors.Is(err, ErrUnavailable):
-		code = FailureUnavailable
+		failure.Code = FailureUnavailable
 	case errors.Is(err, context.DeadlineExceeded):
-		code = FailureTimeout
-	case errors.Is(err, errModelProtocol):
-		code = FailureProtocol
+		failure.Code = FailureTimeout
+	case errors.Is(err, errModelProtocol), errors.Is(err, errFinishLength):
+		failure.Code = FailureProtocol
 	case errors.Is(err, errBudgetConfiguration):
-		code = FailureConfiguration
+		failure.Code = FailureConfiguration
 	}
-	return &Failure{Code: code, ModelRounds: usage.modelRounds, ToolCalls: usage.toolCalls, ToolResultBytes: usage.toolResultBytes, Cause: err}
+	return failure
 }
 
 // toolFailureCode 将工具错误归类为移动端可展示的固定码。

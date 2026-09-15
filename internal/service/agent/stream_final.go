@@ -3,7 +3,6 @@ package agent
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 )
@@ -19,7 +18,7 @@ func readFinalStream(reader io.Reader, emit func(string) error) error {
 		line := strings.TrimSuffix(scanner.Text(), "\r")
 		total += len(line) + 1
 		if total > 2<<20 {
-			return fmt.Errorf("%w: 模型流过大", errModelProtocol)
+			return &modelError{Kind: "stream_oversize", Base: errModelProtocol}
 		}
 		if line != "" {
 			if strings.HasPrefix(line, "data:") {
@@ -37,25 +36,25 @@ func readFinalStream(reader io.Reader, emit func(string) error) error {
 		data = ""
 		if payload == "[DONE]" {
 			if !finished || !received {
-				return fmt.Errorf("%w: 最终模型流不完整", errModelProtocol)
+				return &modelError{Kind: "missing_done", Retry: true, Base: ErrUnavailable}
 			}
 			return nil
 		}
 		var chunk streamChunk
-		if err := decodeStreamChunk(payload, &chunk); err != nil {
-			return err
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			return &modelError{Kind: "chunk_invalid", Base: errModelProtocol}
 		}
 		choice, err := singleStreamChoice(chunk, finished)
 		if err != nil {
 			return err
 		}
 		if len(choice.Delta.Calls) > 0 {
-			return fmt.Errorf("%w: 最终回答不能调用工具", errModelProtocol)
+			return &modelError{Kind: "final_tool_call", Base: errModelProtocol}
 		}
 		if choice.Delta.Content != "" {
 			contentBytes += len(choice.Delta.Content)
 			if contentBytes > maxModelContentBytes {
-				return fmt.Errorf("%w: 最终回答过长", errModelProtocol)
+				return &modelError{Kind: "content_oversize", Base: errModelProtocol}
 			}
 			received = true
 			if err = emit(choice.Delta.Content); err != nil {
@@ -63,30 +62,25 @@ func readFinalStream(reader io.Reader, emit func(string) error) error {
 			}
 		}
 		if choice.Finish != nil {
+			if *choice.Finish == "length" {
+				return &modelError{Kind: "finish_length", Base: errModelProtocol}
+			}
 			if *choice.Finish != "stop" {
-				return fmt.Errorf("%w: 最终回答未正常停止", errModelProtocol)
+				return &modelError{Kind: "finish_invalid", Base: errModelProtocol}
 			}
 			finished = true
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("%w: 读取模型流失败", errModelProtocol)
+	if scanner.Err() != nil {
+		return &modelError{Kind: "stream_truncated", Retry: true, Base: ErrUnavailable}
 	}
-	return fmt.Errorf("%w: 模型流提前结束", errModelProtocol)
-}
-
-// decodeStreamChunk 将供应商帧解析为当前 Agent 所需的最小结构。
-func decodeStreamChunk(payload string, chunk *streamChunk) error {
-	if err := json.Unmarshal([]byte(payload), chunk); err != nil {
-		return fmt.Errorf("%w: 模型帧无效", errModelProtocol)
-	}
-	return nil
+	return &modelError{Kind: "stream_truncated", Retry: true, Base: ErrUnavailable}
 }
 
 // singleStreamChoice 约束最终流只包含一个尚未结束的候选项。
 func singleStreamChoice(chunk streamChunk, finished bool) (streamChoice, error) {
 	if len(chunk.Choices) != 1 || chunk.Choices[0].Index != 0 || finished {
-		return streamChoice{}, fmt.Errorf("%w: 模型候选项无效", errModelProtocol)
+		return streamChoice{}, &modelError{Kind: "choice_invalid", Base: errModelProtocol}
 	}
 	return chunk.Choices[0], nil
 }

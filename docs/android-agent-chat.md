@@ -553,7 +553,7 @@ HTTP 状态已经是 `200`，运行错误通过以下终止事件表达：
 }
 ```
 
-只展示安全 `summary` 与稳定 `code`，不要尝试从文本推断供应商内部错误。工具失败会在 `tool.completed.code` 中给出 `tool_invalid_command`、`tool_unsupported_command` 或 `tool_read_failed`；运行失败会给出 `agent_busy`、`model_unavailable`、`agent_timeout`、`model_protocol_error`、`agent_configuration_error` 或 `agent_failed`。网络断开、解析失败、事件消费者失败，或 EOF 无终止事件统一归类为“未完成”，并与 `run.failed` 区分，以便排障。
+只展示安全 `summary` 与稳定 `code`，不要尝试从文本推断供应商内部错误。工具失败会在 `tool.completed.code` 中给出 `tool_invalid_command`、`tool_unsupported_command` 或 `tool_read_failed`；运行失败会给出 `agent_busy`、`model_unavailable`、`agent_timeout`、`model_protocol_error`、`agent_configuration_error` 或 `agent_failed`。服务端对瞬时模型故障（网络、429、5xx、流截断）已自动重试一次；`model_unavailable` 表示重试后仍失败，客户端可提示稍后再试。网络断开、解析失败、事件消费者失败，或 EOF 无终止事件统一归类为“未完成”，并与 `run.failed` 区分，以便排障。
 
 一次用户最多有一个在途问答，服务端全局最多四个 Agent。自动重试必须克制：建议只对连接建立前的瞬时网络失败提供一次用户确认后的重试，不要自动重放已经收到工具事件的运行。
 
