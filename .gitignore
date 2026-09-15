@@ -7,6 +7,7 @@
 
 # 构建与测试产物
 /bin/
+/dist/
 coverage.out
 *.test
 

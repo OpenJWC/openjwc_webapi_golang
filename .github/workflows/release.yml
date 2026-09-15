@@ -1,0 +1,88 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的标签，必须以 v 开头（例如 v1.0.0）
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 构建并发布 Linux 静态二进制
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 发布前必须先通过完整检查，避免把坏代码打成制品
+      - name: 格式 · 静态检查 · 单元测试
+        run: make check
+
+      - name: 解析版本
+        id: version
+        run: |
+          set -eu
+          tag="${{ inputs.tag || github.ref_name }}"
+          case "$tag" in
+            v*) ;;
+            *) echo "标签必须以 v 开头: $tag" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: 确认 licenses 生成物与提交内容一致
+        run: |
+          set -eu
+          go run ./tools/licenses
+          git diff --exit-code -- internal/license/third_party.txt
+
+      # 只剥离 DWARF（-w），保留符号表，使 panic 栈仍可读；
+      # 不使用 -s，否则崩溃现场只剩地址，排障成本会明显上升。
+      - name: 构建 linux/amd64 与 linux/arm64
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags "-w -X github.com/OpenJWC/openjwc_webapi_golang/internal/transport/cli.Version=${VERSION}" \
+              -o "dist/openjwc-linux-${arch}" ./cmd/openjwc
+          done
+          ( cd dist && sha256sum openjwc-linux-amd64 openjwc-linux-arm64 > SHA256SUMS )
+
+      - name: 冒烟验证产物
+        run: |
+          set -eu
+          file dist/openjwc-linux-amd64
+          file dist/openjwc-linux-amd64 | grep -q "statically linked"
+          dist/openjwc-linux-amd64 --version
+          dist/openjwc-linux-amd64 licenses | head -1
+          cat dist/SHA256SUMS
+
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag \
+            dist/openjwc-linux-amd64 dist/openjwc-linux-arm64 dist/SHA256SUMS

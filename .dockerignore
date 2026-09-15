@@ -1,0 +1,11 @@
+.git
+.gitattributes
+.github
+.agents
+bin
+dist
+data
+logs
+*.md
+.env
+.env.*
